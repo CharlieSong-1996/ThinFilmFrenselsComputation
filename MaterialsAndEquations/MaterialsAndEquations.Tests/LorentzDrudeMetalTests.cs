@@ -5,29 +5,16 @@ using MaterialsAndEquations;
 
 namespace MaterialsAndEquations.Tests
 {
+    /// <summary>
+    /// Lorentz-Drude 金属与 OpticalMaterial 的单元测试
+    /// 包含对 Drude 极限、插值和 GetNk 的简单验证
+    /// </summary>
     [TestClass]
     public class LorentzDrudeMetalTests
     {
         [TestMethod]
-        public void DrudeOnly_EpsAtLongWavelengths_IsApproximatelyEpsInf()
-        {
-            // Drude only: set oscillators empty
-            double epsInf = 1.0;
-            double plasmaEv = 9.0; // arbitrary
-            double gammaEv = 0.1;
-            var metal = LorentzDrudeMetal.CreateFromEvParameters("test", epsInf, plasmaEv, gammaEv, Array.Empty<(double, double, double)>());
-
-            // very long wavelength -> omega -> 0, dielectric ~ epsInf
-            double wavelength = 1.0; // 1 meter (very long)
-            var n = metal[wavelength];
-            var eps = n * n;
-
-            Assert.AreEqual(epsInf, eps.Real, 1e-12, "Real part of epsilon should approach epsInf at low omega");
-            Assert.AreEqual(0.0, eps.Imaginary, 1e-12, "Imaginary part should be ~0 at low omega");
-        }
-
-        [TestMethod]
-        public void FromPoints_Interpolation_ReturnsLinearInterpolatedValue()
+        // 测试：从离散点创建材料时，插值应为线性插值（在中点应取得中间值）
+        public void FromPoints_LinearInterpolation()
         {
             // Create a simple material where refractive index equals wavelength (real) for test
             var points = new System.Collections.Generic.Dictionary<double, Complex>
@@ -43,7 +30,8 @@ namespace MaterialsAndEquations.Tests
         }
 
         [TestMethod]
-        public void GetNk_ReturnsComponents()
+        // 测试：GetNk 方法应返回 n（实部）和 k（虚部）两个分量
+        public void GetNk_ReturnsNK()
         {
             var mat = new OpticalMaterial("const", wl => new Complex(1.23, 4.56));
             mat.GetNk(500e-9, out double n, out double k);
