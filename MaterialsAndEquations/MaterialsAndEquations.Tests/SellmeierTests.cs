@@ -17,8 +17,8 @@ namespace MaterialsAndEquations.Tests
         public void K9_RefractiveIndex()
         {
             // Arrange
-            Assert.IsTrue(KM.Materials.ContainsKey("K9"), "Known materials must contain K9");
-            var material = KM.Materials["K9"];
+            Assert.IsTrue(KM.Materials.ContainsKey("H-K9L"), "Known materials must contain K9");
+            var material = KM.Materials["H-K9L"];
 
             int points = 701; // 300,301,...,1000 nm
             double[] xs = new double[points]; // wavelength in nm for plotting

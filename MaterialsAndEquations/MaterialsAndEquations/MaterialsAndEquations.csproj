@@ -6,4 +6,13 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <None Remove="KnownMaterials\LD.csv" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="KnownMaterials\CDGM.csv" />
+    <EmbeddedResource Include="KnownMaterials\LD.csv" />
+  </ItemGroup>
+
 </Project>

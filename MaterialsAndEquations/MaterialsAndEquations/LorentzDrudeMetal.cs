@@ -22,7 +22,8 @@ namespace MaterialsAndEquations
         private static readonly double EvToRadPerSec = ElectronCharge / Hbar; // ≈ 1.519267e15 rad/s per eV
 
         private readonly double _epsInf;
-        private readonly double _omegaP; // rad/s
+        private readonly double _omegaP; // original plasma rad/s used in oscillator numerators
+        private readonly double _omegaPDrude; // effective plasma rad/s used in Drude term (sqrt(f0)*omegaP)
         private readonly double _gammaDrude; // rad/s
         private readonly (double Strength, double Omega0, double Gamma)[] _oscillators;
 
@@ -35,11 +36,12 @@ namespace MaterialsAndEquations
         /// <param name="omegaP">等离子体角频率，单位：rad/s</param>
         /// <param name="gammaDrude">Drude 阻尼，单位：rad/s</param>
         /// <param name="oscillators">每项为 (strength f_j, omega0_j (rad/s), gamma_j (rad/s))</param>
-        public LorentzDrudeMetal(string name, double epsInf, double omegaP, double gammaDrude, IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
-            : base(name, wl => RefractiveIndexAtWavelength(wl, epsInf, omegaP, gammaDrude, oscillators))
+        public LorentzDrudeMetal(string name, double epsInf, double omegaP, double omegaPDrude, double gammaDrude, IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
+            : base(name, wl => RefractiveIndexAtWavelength(wl, epsInf, omegaP, omegaPDrude, gammaDrude, oscillators))
         {
             _epsInf = epsInf;
             _omegaP = omegaP;
+            _omegaPDrude = omegaPDrude;
             _gammaDrude = gammaDrude;
             _oscillators = oscillators?.ToArray() ?? Array.Empty<(double, double, double)>();
         }
@@ -53,32 +55,73 @@ namespace MaterialsAndEquations
         /// <param name="drudeGammaEv">Drude 阻尼能量，单位：eV</param>
         /// <param name="oscillatorsEv">振子参数序列，每项为 (strength f_j, resonanceEnergyEv, gammaEv)</param>
         /// <returns>LorentzDrudeMetal 实例</returns>
-        public static LorentzDrudeMetal CreateFromEvParameters(string name, double epsInf, double plasmaEnergyEv, double drudeGammaEv, IEnumerable<(double Strength, double ResonanceEnergyEv, double GammaEv)> oscillatorsEv)
+        public static LorentzDrudeMetal CreateFromEvParameters(string name, double epsInf, double plasmaEnergyEv, double drudeGammaEv, IEnumerable<(double Strength, double ResonanceEnergyEv, double GammaEv)> oscillatorsEv, double drudeStrength = 1.0)
         {
             if (oscillatorsEv == null) throw new ArgumentNullException(nameof(oscillatorsEv));
 
-            double omegaP = plasmaEnergyEv * EvToRadPerSec;
+            double omegaP = plasmaEnergyEv * EvToRadPerSec; // original omega_p
             double gammaDrude = drudeGammaEv * EvToRadPerSec;
+            double omegaPDrude = Math.Sqrt(Math.Max(0.0, drudeStrength)) * omegaP; // Ωp = sqrt(f0)*ωp
             var osc = oscillatorsEv.Select(o => (o.Strength, o.ResonanceEnergyEv * EvToRadPerSec, o.GammaEv * EvToRadPerSec));
-            return new LorentzDrudeMetal(name, epsInf, omegaP, gammaDrude, osc);
+            return new LorentzDrudeMetal(name, epsInf, omegaP, omegaPDrude, gammaDrude, osc);
         }
 
-        private static Complex RefractiveIndexAtWavelength(double wavelengthMeters, double epsInf, double omegaP, double gammaDrude, IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
+        private static Complex RefractiveIndexAtWavelength(double wavelengthMeters, double epsInf, double omegaP, double omegaPDrude, double gammaDrude, IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
         {
+            //此段Python代码供参考，为金属金的Lorentz-Drude模型参数示例
+            //# Lorentz-Drude (LD) model parameters
+            //ωp = 9.03  #eV
+            //f0 = 0.760
+            //Γ0 = 0.053 #eV
+            //f1 = 0.024
+            //Γ1 = 0.241 #eV
+            //ω1 = 0.415 #eV
+            //f2 = 0.010
+            //Γ2 = 0.345 #eV
+            //ω2 = 0.830 #eV
+            //f3 = 0.071
+            //Γ3 = 0.870 #eV
+            //ω3 = 2.969 #eV
+            //f4 = 0.601
+            //Γ4 = 2.494 #eV
+            //ω4 = 4.304 #eV
+            //f5 = 4.384
+            //Γ5 = 2.214 #eV
+            //ω5 = 13.32 #eV
+            //Ωp = f0**.5 * ωp  #eV
+            //def LD(ω):  #ω: eV
+            //    ε = 1-Ωp**2/(ω*(ω+1j*Γ0))
+            //    ε += f1*ωp**2 / ((ω1**2-ω**2)-1j*ω*Γ1)
+            //    ε += f2*ωp**2 / ((ω2**2-ω**2)-1j*ω*Γ2)
+            //    ε += f3*ωp**2 / ((ω3**2-ω**2)-1j*ω*Γ3)
+            //    ε += f4*ωp**2 / ((ω4**2-ω**2)-1j*ω*Γ4)
+            //    ε += f5*ωp**2 / ((ω5**2-ω**2)-1j*ω*Γ5)
+            //    return ε
+            //ev_min=0.2
+            //ev_max=5
+            //npoints=200
+            //eV = np.logspace(np.log10(ev_min), np.log10(ev_max), npoints)
+            //μm = 4.13566733e-1*2.99792458/eV
+            //ε = LD(eV)
+            //n = (ε**.5).real
+            //k = (ε**.5).imag
+
             if (wavelengthMeters <= 0) throw new ArgumentOutOfRangeException(nameof(wavelengthMeters), "wavelength must be positive and in meters");
 
             // angular frequency
             double omega = 2.0 * Math.PI * SpeedOfLight / wavelengthMeters;
             Complex i = Complex.ImaginaryOne;
 
-            // Drude term: - omega_p^2 / (omega^2 + i gamma_D omega)
+            // Drude term: - Omega_p^2 / (omega^2 + i gamma_D omega)
+            // Omega_p (effective) = sqrt(f0) * omegaP; use omegaPDrude for Drude numerator
             Complex denomDrude = omega * omega + i * gammaDrude * omega;
-            Complex eps = epsInf - (omegaP * omegaP) / denomDrude;
+            Complex eps = epsInf - (omegaPDrude * omegaPDrude) / denomDrude;
 
             // Lorentz oscillators: sum_j f_j * omega_p^2 / (omega_j^2 - omega^2 - i gamma_j omega)
             foreach (var (strength, omega0, gamma) in oscillators)
             {
                 Complex denomLor = omega0 * omega0 - omega * omega - i * gamma * omega;
+                // oscillator numerators use the original omega_p^2
                 eps += (strength * omegaP * omegaP) / denomLor;
             }
 
