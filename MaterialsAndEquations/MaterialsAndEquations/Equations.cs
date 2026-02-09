@@ -10,58 +10,134 @@ namespace MaterialsAndEquations
 {
     public static class Equations
     {
-        /// <summary>
-        /// 计算入射光线与出射光线的夹角，以及反射率和透射率。
-        /// </summary>
-        /// <param name="nIn">入射材料折射率</param>
-        /// <param name="nOut">出射材料折射率</param>
-        /// <param name="thetaIn">弧度制</param>
-        /// <param name="polarizationS">偏振类型</param>
-        /// <param name="thetaOut">弧度制</param>
-        /// <param name="reflection">反射率，1.0代表全反射，0.0代表全透射</param>
-        /// <param name="transmission">透射率，0.0代表全反射，1.0代表全透射</param>
-        /// <exception cref="NotImplementedException"></exception>
         public static void ComputeReflectionTransmission(
             out double thetaOut,
             out double reflection,
             out double transmission,
-            Complex nIn, 
-            Complex nOut, 
-            double thetaIn, 
+            double wavelength_Meters,
+            OpticalMaterial materialIn,
+            IEnumerable<(OpticalMaterial layerMaterial, double thickness_Meters)> thinLayers,
+            OpticalMaterial materialOut,
+            double thetaIn,
             bool polarizationS)
         {
-            throw new NotImplementedException();
+            // 基础常数与输入转换
+            Complex i = Complex.ImaginaryOne;
+            double thetaInRad = thetaIn * Math.PI / 180.0;
+            double k0 = 2.0 * Math.PI / wavelength_Meters;
+
+            // 获取入/出射材料折射率
+            Complex nIn = materialIn[wavelength_Meters];
+            Complex nOut = materialOut[wavelength_Meters];
+
+            // 斯涅尔定律不变量 alpha = n * sin(theta)
+            Complex alpha = nIn * Math.Sin(thetaInRad);
+
+            // 计算出射角度 (仅返回实部，单位：度)
+            Complex sinThetaOut = alpha / nOut;
+            thetaOut = Complex.Asin(sinThetaOut).Real * 180.0 / Math.PI;
+
+            // 辅助函数：计算 kz 和 导纳 eta
+            (Complex kz, Complex eta) GetParams(Complex n)
+            {
+                // kz = k0 * sqrt(n^2 - alpha^2)
+                Complex term = Complex.Sqrt(n * n - alpha * alpha);
+                Complex kzVal = k0 * term;
+
+                Complex etaVal;
+                if (polarizationS) // TE (s-polarization)
+                {
+                    etaVal = kzVal; // 忽略常数因子，因为在比率中消掉
+                }
+                else // TM (p-polarization)
+                {
+                    // eta ~ n^2 / kz
+                    etaVal = (n * n) / kzVal;
+                }
+                return (kzVal, etaVal);
+            }
+
+            var (kzIn, etaIn) = GetParams(nIn);
+            var (kzOut, etaOut) = GetParams(nOut);
+
+            // 传输矩阵法 (Transfer Matrix Method)
+            // 初始矩阵为单位阵
+            Complex m11 = 1.0;
+            Complex m12 = 0.0;
+            Complex m21 = 0.0;
+            Complex m22 = 1.0;
+
+            if (thinLayers != null)
+            {
+                foreach (var layer in thinLayers)
+                {
+                    var nLayer = layer.layerMaterial[wavelength_Meters];
+                    var d = layer.thickness_Meters;
+                    var (kzLayer, etaLayer) = GetParams(nLayer);
+
+                    // 相位厚度 delta
+                    Complex delta = kzLayer * d;
+                    Complex sinD = Complex.Sin(delta);
+                    Complex cosD = Complex.Cos(delta);
+
+                    // 层特征矩阵元素
+                    // M = [ cos(delta)      -i/eta * sin(delta) ]
+                    //     [ -i*eta*sin(delta)  cos(delta)       ]
+                    Complex a = cosD;
+                    // 防止分母为0 (极少数情况)
+                    Complex b = Complex.Abs(etaLayer) > 1e-15 
+                        ? -(i / etaLayer) * sinD 
+                        : 0; 
+                    Complex c = -(i * etaLayer) * sinD;
+                    Complex dVal = cosD;
+
+                    // 矩阵乘法 M_total = M_total * M_layer
+                    Complex t11 = m11 * a + m12 * c;
+                    Complex t12 = m11 * b + m12 * dVal;
+                    Complex t21 = m21 * a + m22 * c;
+                    Complex t22 = m21 * b + m22 * dVal;
+
+                    m11 = t11; m12 = t12;
+                    m21 = t21; m22 = t22;
+                }
+            }
+
+            // 计算反射系数 r 和透射系数 t
+            // r = (etaIn*m11 + etaIn*etaOut*m12 - m21 - etaOut*m22) / D
+            // t = 2*etaIn / D
+            // D = etaIn*m11 + etaIn*etaOut*m12 + m21 + etaOut*m22
+
+            Complex D = etaIn * m11 + etaIn * etaOut * m12 + m21 + etaOut * m22;
+            
+            // 防止除以零
+            if (Complex.Abs(D) < 1e-15)
+            {
+                reflection = 0;
+                transmission = 0;
+                return;
+            }
+
+            Complex rNumerator = etaIn * m11 + etaIn * etaOut * m12 - m21 - etaOut * m22;
+            
+            Complex rVal = rNumerator / D;
+            Complex tVal = 2.0 * etaIn / D;
+
+            // 计算能量反射率 R 和 透射率 T
+            reflection = Complex.Abs(rVal) * Complex.Abs(rVal); // |r|^2
+
+            // T = Re(etaOut) / Re(etaIn) * |t|^2
+            double reEtaIn = etaIn.Real;
+            double reEtaOut = etaOut.Real;
+
+            if (reEtaIn > 1e-15)
+            {
+                transmission = (reEtaOut / reEtaIn) * Complex.Abs(tVal) * Complex.Abs(tVal);
+            }
+            else
+            {
+                // 全反射或其他情况，入射导纳实部为0，无法定义常规透射率
+                transmission = 0;
+            }
         }
-
-
-        //Matlab code for reference:
-        //lambda=660e-9;
-        //n0=1.721;
-        //n1=2.25432+3.63712i;
-        //n2=0.20026+3.62238i;
-        //n3=0.065+3.7793i;
-        //n4=n2;
-        //n5=1.333;
-        //d1=5e-9;d2=2e-9;d3=42e-9;d4=13e-9;theta=linspace(51.35,57.6,10000);
-        //        k0=2*pi* n0/lambda* cos(theta* pi/180);
-        //        k1=2*pi* sqrt((n1/lambda )^2-(n0/lambda* sin(theta* pi/180 ) ).^2 );
-        //k2=2*pi* sqrt((n2/lambda )^2-(n0/lambda* sin(theta* pi/180 ) ).^2 );
-        //k3=2*pi* sqrt((n3/lambda )^2-(n0/lambda* sin(theta* pi/180 ) ).^2 );
-        //k4=2*pi* sqrt((n4/lambda )^2-(n0/lambda* sin(theta* pi/180 ) ).^2 );
-        //k5=2*pi* sqrt((n5/lambda )^2-(n0/lambda* sin(theta* pi/180 ) ).^2 );
-        //p=2;
-        //s=0;
-        //polar=p;
-        //rou01=(n1^polar* k0-n0^polar* k1)./(n1^polar* k0+n0^polar* k1);
-        //        rou12=(n2^polar* k1-n1^polar* k2)./(n2^polar* k1+n1^polar* k2);
-        //        rou23=(n3^polar* k2-n2^polar* k3)./(n3^polar* k2+n2^polar* k3);
-        //        rou34=(n4^polar* k3-n3^polar* k4)./(n4^polar* k3+n3^polar* k4);
-        //        rou45=(n5^polar* k4-n4^polar* k5)./(n5^polar* k4+n4^polar* k5);
-        //        rou345=(rou34+rou45.* exp(2*i* k4*d4))./(1+rou34.* rou45.*exp(2*i* k4*d4));
-        //rou2345=(rou23+rou345.* exp(2*i* k3*d3))./(1+rou23.* rou345.*exp(2*i* k3*d3));
-        //rou12345=(rou12+rou2345.* exp(2*i* k2*d2))./(1+rou12.* rou2345.*exp(2*i* k2*d2));
-        //rou012345=(rou01+rou12345.* exp(2*i* k1*d1))./(1+rou01.* rou12345.*exp(2*i* k1*d1))
-        //R=abs(rou012345).^2;R=R/max(R);
-
     }
 }
