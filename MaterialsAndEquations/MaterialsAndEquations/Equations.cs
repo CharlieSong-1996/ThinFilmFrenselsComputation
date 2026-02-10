@@ -10,6 +10,18 @@ namespace MaterialsAndEquations
 {
     public static class Equations
     {
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="thetaOut"></param>
+        /// <param name="reflection"></param>
+        /// <param name="transmission"></param>
+        /// <param name="wavelength_Meters"></param>
+        /// <param name="materialIn"></param>
+        /// <param name="thinLayers"></param>
+        /// <param name="materialOut"></param>
+        /// <param name="thetaIn">角度!!</param>
+        /// <param name="polarizationS"></param>
         public static void ComputeReflectionTransmission(
             out double thetaOut,
             out double reflection,

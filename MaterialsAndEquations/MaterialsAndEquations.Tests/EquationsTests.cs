@@ -98,5 +98,28 @@ namespace MaterialsAndEquations.Tests
             // Assert that we produced the expected number of samples
             Assert.AreEqual((int)((85.0 - 40.0) / 0.1) + 1, angles.Count);
         }
+
+
+        [TestMethod]
+        public void SensitivityTest()
+        {
+            var materialIn = KM.Materials["H-K9L"];
+            var materialOut = KM.Materials["H2O"];
+
+            var layers = new List<(MaterialsAndEquations.OpticalMaterial, double)>()
+            {
+                (KM.Materials["Cr"], 5e-9),
+                (KM.Materials["Au"], 47.5e-9),
+            };
+
+
+            var optimizer = new SPRiOptimizer();
+
+            for(double i = 60; i < 80; i += 0.1)
+            {
+                var sensi = optimizer.ComputeSPRiSensitivity(materialIn, layers, materialOut, 660e-9, i);
+                TestContext?.WriteLine($"Angle:{i:F1}\t{sensi:F3}");
+            }
+        }
     }
 }

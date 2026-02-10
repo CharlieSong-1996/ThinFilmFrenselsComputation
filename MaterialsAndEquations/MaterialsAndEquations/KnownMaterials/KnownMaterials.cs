@@ -19,18 +19,20 @@ namespace MaterialsAndEquations.KnownMaterials
 
         static KnownMaterials()
         {
+            LoadCDGMData(); // 读取CDGM玻璃数据库
+            LoadLDData(); // 读取 Lorentz-Drude（金属）数据库
+
+            Materials.Add("H2O", new SellmeierMaterial("H2O", [(0.75831,0.01007),(0.08495,8.91377)]));
+        }
+
+        private static void LoadCDGMData()
+        {
             // 读取项目中的 CDGM.csv（尝试多个候选路径），自动解析每行：
             // - 若存在 K/L 对 => 生成 SellmeierMaterial
             // - 否则若存在 A0..A5 => 生成 SchottMaterial
             // 将生成的材料按名称添加到 Materials 字典（不覆盖已存在项）
 
 
-            LoadCDGMData(); // 读取CDGM玻璃数据库
-            LoadLDData(); // 读取 Lorentz-Drude（金属）数据库
-        }
-
-        private static void LoadCDGMData()
-        {
             using var stream = new StreamReader(
                 Assembly.GetExecutingAssembly()
                 .GetManifestResourceStream("MaterialsAndEquations.KnownMaterials.CDGM.csv")!, encoding: Encoding.UTF8);

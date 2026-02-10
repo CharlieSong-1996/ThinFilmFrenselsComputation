@@ -72,5 +72,36 @@ namespace MaterialsAndEquations.Tests
                 }
             }
         }
+
+
+        [TestMethod]
+        public void Water_RefractiveIndex()
+        {
+            // Arrange
+            Assert.IsTrue(KM.Materials.ContainsKey("H2O"), "Known materials must contain water");
+            var material = KM.Materials["H2O"];
+
+            int points = 701; // 300,301,...,1000 nm
+            double[] xs = new double[points]; // wavelength in nm for plotting
+            double[] ys = new double[points]; // refractive index (real)
+
+            double startNm = 300.0;
+            double endNm = 1000.0;
+            double step = (endNm - startNm) / (points - 1);
+
+            for (int i = 0; i < points; i++)
+            {
+                double wlNm = startNm + i * step;
+                double wlM = wlNm * 1e-9; // convert nm to meters
+                xs[i] = wlNm;
+                var c = material[wlM];
+                ys[i] = c.Real;
+
+                if (i % 20 == 0) // Log every 20th point
+                {
+                    TestContext?.WriteLine($"Wavelength: {wlNm} nm, Refractive Index: {c.Real}");
+                }
+            }
+        }
     }
 }
