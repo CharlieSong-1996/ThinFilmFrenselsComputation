@@ -1,13 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
+using MathNet.Numerics;
+using MathNet.Numerics.LinearAlgebra;
 
 namespace MaterialsAndEquations
 {
-    public class SPRiOptimizer
+    public static class SPRiOptimizer
     {
         /// <summary>
         /// 
@@ -25,7 +26,7 @@ namespace MaterialsAndEquations
         /// <param name="thetaIn">角度!!</param>
         /// <returns></returns>
         /// <exception cref="NotImplementedException"></exception>
-        public double ComputeSPRiSensitivity(
+        public static double ComputeSPRiSensitivity(
             OpticalMaterial materialIn,
             IEnumerable<(OpticalMaterial layerMaterial, double thickness_Meters)> thinLayers,
             OpticalMaterial materialOut,
@@ -75,13 +76,13 @@ namespace MaterialsAndEquations
             double relChange;
 
 
-            if(absoluteSensitivity)
+            if (absoluteSensitivity)
             {
                 relChange = dR; // use absolute change in reflectance
             }
             else
             {
-                if(reflection0 < 1e-15)
+                if (reflection0 < 1e-15)
                 {
                     // If baseline reflectance is very small, sensitivity becomes ill-defined
                     // In this case, we can either return NaN or use absolute change as a fallback
@@ -94,8 +95,8 @@ namespace MaterialsAndEquations
             }
 
             // change in refractive index (real part)
-            Complex n0 = materialOut[wavelength_Meters];
-            Complex n1 = material_dRI[wavelength_Meters];
+            System.Numerics.Complex n0 = materialOut[wavelength_Meters];
+            System.Numerics.Complex n1 = material_dRI[wavelength_Meters];
             double dnOut = (n1 - n0).Real;
 
             if (Math.Abs(dnOut) < 1e-20)
@@ -121,8 +122,8 @@ namespace MaterialsAndEquations
         /// 其与底边的中垂线的夹角。
         /// 
         /// </summary>
-        /// <param name="spriAngle"></param>
-        /// <param name="prismOutAngle"></param>
+        /// <param name="spriInternalAngle"></param>
+        /// <param name="spriExternalAngle"></param>
         /// <param name="slideMaterial"></param>
         /// <param name="prismMaterial"></param>
         /// <param name="wavelength_Meters"></param>
@@ -134,16 +135,17 @@ namespace MaterialsAndEquations
         /// 
         /// </param>
         /// <exception cref="ArgumentException"></exception>
-        public void ComputeSPRiPrismAngles(
-            ref double spriAngle,
-            ref double prismOutAngle,
+        public static void ComputeSPRiPrismAngles(
+            ref double spriInternalAngle,
+            ref double spriExternalAngle,
             OpticalMaterial slideMaterial,
             OpticalMaterial prismMaterial,
             double wavelength_Meters,
             double prismAngle = 60)
         {
-            if (double.IsNaN(spriAngle) == double.IsNaN(prismOutAngle))
-                throw new ArgumentException("Dont know which should be computed");
+            // 验证输入参数：必须有且仅有一个角度是NaN
+            if (double.IsNaN(spriInternalAngle) == double.IsNaN(spriExternalAngle))
+                throw new ArgumentException("Exactly one of spriInternalAngle or spriExternalAngle must be NaN");
 
             // helper
             static double Deg2Rad(double d) => d * Math.PI / 180.0;
@@ -153,146 +155,339 @@ namespace MaterialsAndEquations
             // get real refractive indices (use real part)
             double nSlide = slideMaterial[wavelength_Meters].Real;
             double nPrism = prismMaterial[wavelength_Meters].Real;
-            const double nAir = 1.0;
+            var prismRad = Deg2Rad(prismAngle);
 
-            // If prismAngle is NaN -> branch where spriAngle is known and we compute prismOutAngle
-            if (double.IsNaN(prismAngle))
+            //棱镜外角度为NaN -> 已知SPRi光学角度计算棱镜外角度
+            if (double.IsNaN(spriExternalAngle))
             {
-                // spriAngle must be provided (checked earlier)
-                if (double.IsNaN(spriAngle))
+                //根据SPRi芯片入射角度(入射光和芯片法线的夹角)
+                //计算SPRi棱镜外入射角度(入射光和中垂线的夹角)
+
+                //棱镜外角度未知需要计算SPRi棱镜外入射角度
+                if (double.IsNaN(spriInternalAngle))
                 {
-                    prismOutAngle = double.NaN;
+                    spriExternalAngle = double.NaN;
                     return;
                 }
 
-                // Snell at slide -> prism (both angles measured from local normal which is vertical here)
-                double spriRad = Deg2Rad(spriAngle);
-                double sinThetaPrism = (nSlide * Math.Sin(spriRad)) / nPrism;
-                if (Math.Abs(sinThetaPrism) > 1.0)
+                //光路可逆：从slide到棱镜的折射
+                var slidePrismRad = Deg2Rad(spriInternalAngle);
+                var sinSlidePrism = Math.Sin(slidePrismRad);
+                var sinPrismSlide = nSlide * sinSlidePrism / nPrism;
+
+                //检查全反射
+                if (Math.Abs(sinPrismSlide) > 1.0)
                 {
-                    // total internal reflection (no transmission into prism)
-                    prismOutAngle = double.NaN;
+                    spriExternalAngle = double.NaN;
                     return;
                 }
-                double thetaPrism = Math.Asin(Clamp(sinThetaPrism, -1.0, 1.0)); // radians, measured from vertical (normal)
 
-                // ray direction inside prism (unit), x to right, y up
-                double ix = Math.Sin(thetaPrism);
-                double iy = Math.Cos(thetaPrism);
+                var prismSlideRad = Math.Asin(Clamp(sinPrismSlide, -1.0, 1.0));
 
-                // decide which side (left/right) it will hit based on sign of ix
-                int sideSign = ix >= 0 ? 1 : -1; // +1 => right side, -1 => left side
-                double beta = Deg2Rad(prismAngle); // side angle w.r.t. horizontal inside triangle
+                //从几何关系计算棱镜内光线射向侧面的角度
+                //prismSlideRad + prismAirRad === prismRad
+                var prismAirRad = prismRad - prismSlideRad;
 
-                // side unit vector pointing from base to apex (into triangle)
-                double sx = sideSign * Math.Cos(beta);
-                double sy = Math.Sin(beta);
+                //从棱镜到空气的折射
+                var sinPrismAir = Math.Sin(prismAirRad);
+                var sinAirPrism = nPrism * sinPrismAir;
 
-                // outward normal for that side (rotate s by -90deg): n_out = (sy, -sx)
-                double nx = sy;
-                double ny = -sx;
-
-                // incident angle at side: cos(theta1) = -n·i (n points outward; i points toward outside)
-                double dot_ni = ix * nx + iy * ny;
-                double cosTheta1 = -dot_ni;
-                cosTheta1 = Clamp(cosTheta1, -1.0, 1.0);
-                double theta1 = Math.Acos(cosTheta1);
-                double sinTheta1 = Math.Sin(theta1);
-
-                // Snell at prism -> air
-                double sinTheta2 = (nPrism * sinTheta1) / nAir;
-                if (Math.Abs(sinTheta2) > 1.0)
+                //检查全反射
+                if (Math.Abs(sinAirPrism) > 1.0)
                 {
-                    // TIR at prism side
-                    prismOutAngle = double.NaN;
+                    spriExternalAngle = double.NaN;
                     return;
                 }
-                double theta2 = Math.Asin(Clamp(sinTheta2, -1.0, 1.0));
 
-                // tangent unit vector (rotate normal by +90deg)
-                double tx = -ny;
-                double ty = nx;
-                // determine rotation direction sign based on projection of incident on tangent
-                double tDot = ix * tx + iy * ty;
-                double rotSign = tDot >= 0 ? 1.0 : -1.0;
+                var airPrismRad = Math.Asin(Clamp(sinAirPrism, -1.0, 1.0));
 
-                // transmitted direction in air: tdir = cos(theta2)*n_out + rotSign*sin(theta2)*t_unit
-                double txDir = Math.Cos(theta2) * nx + rotSign * Math.Sin(theta2) * tx;
-                double tyDir = Math.Cos(theta2) * ny + rotSign * Math.Sin(theta2) * ty;
-
-                // angle relative to vertical midline:
-                // angle = atan2(x, y) (x positive => to right)
-                double outAngleRad = Math.Atan2(txDir, tyDir);
-                prismOutAngle = Rad2Deg(outAngleRad);
-                return;
+                //从几何关系计算外部入射角
+                //airPrismRad === prismAngle - spriExternalAngle
+                spriExternalAngle = Rad2Deg(prismRad - airPrismRad);
             }
             else
             {
-                // prismAngle known -> compute spriAngle from given prismOutAngle
-                if (double.IsNaN(prismOutAngle))
+                //根据SPRi棱镜外入射角度(入射光和中垂线的夹角)
+                //计算SPRi芯片入射角度(入射光和芯片法线的夹角)
+
+                //棱镜外角度已知需要计算SPRi芯片入射角度
+                if (double.IsNaN(spriExternalAngle))
                 {
-                    spriAngle = double.NaN;
+                    spriInternalAngle = double.NaN;
                     return;
                 }
 
-                // transmitted ray in air defined by prismOutAngle (deg) relative to vertical
-                double outRad = Deg2Rad(prismOutAngle);
-                double txDir = Math.Sin(outRad);
-                double tyDir = Math.Cos(outRad);
+                //计算棱镜的入射角
+                //-------------------
+                //      \ prismAngle
+                //       \
+                //       /\
+                //      /  \
+                //     /....\_______
+                //    /|
+                //   / |
+                //  /  |
+                // /   |
+                // spriAngle
+                //
+                // (90 - airPrismAngle) + (90 - spriAngle)
+                // === (180 - prismAngle)
+                //
+                // prismAngle - spriAngle === airPrismAngle
 
-                // choose side by sign of txDir
-                int sideSign = txDir >= 0 ? 1 : -1;
-                double beta = Deg2Rad(prismAngle);
+                double airPrismRad = Deg2Rad(prismAngle - spriExternalAngle);
+                var sinAirPrism = Math.Sin(airPrismRad);
+                var sinPrismAir = sinAirPrism / nPrism;
+                var prismAirRad = Math.Asin(sinPrismAir);
 
-                // side vector (into triangle)
-                double sx = sideSign * Math.Cos(beta);
-                double sy = Math.Sin(beta);
 
-                // outward normal for that side
-                double nx = sy;
-                double ny = -sx;
+                //计算棱镜的入射角
+                //-------------------
+                //      \    /
+                //       \  /
+                //        \/
+                //         \
+                //          \_______
+                //PrismAngle + (90 - PrismSlideIncidenceAngle) ===
+                //(90 + PrismAirIncidenceAngle)
+                //
+                //PrismSlideAngle === PrismAngle - PrismAirIncidenceAngle
 
-                // angle between transmitted direction and normal in air: cosTheta2 = dot(tdir, n_out)
-                double cosTheta2 = Clamp(txDir * nx + tyDir * ny, -1.0, 1.0);
-                double theta2 = Math.Acos(cosTheta2);
-                double sinTheta2 = Math.Sin(theta2);
-
-                // Snell at prism->air reversed to get incidence inside prism
-                double sinTheta1 = (nAir * sinTheta2) / nPrism;
-                if (Math.Abs(sinTheta1) > 1.0)
-                {
-                    // impossible (would be TIR inside), return NaN
-                    spriAngle = double.NaN;
-                    return;
-                }
-                double theta1 = Math.Asin(Clamp(sinTheta1, -1.0, 1.0));
-                double cosTheta1 = Math.Cos(theta1);
-
-                // tangent unit vector
-                double tx = -ny;
-                double ty = nx;
-                // determine rotation direction sign: transmitted projection on tangent
-                double tDot = txDir * tx + tyDir * ty;
-                double rotSign = tDot >= 0 ? 1.0 : -1.0;
-
-                // incident direction inside prism (points from inside toward surface)
-                // i = -cos(theta1)*n_out + rotSign*sin(theta1)*t_unit
-                double ix = -cosTheta1 * nx + rotSign * Math.Sin(theta1) * tx;
-                double iy = -cosTheta1 * ny + rotSign * Math.Sin(theta1) * ty;
-
-                // angle inside prism relative to vertical:
-                double thetaPrismRad = Math.Atan2(ix, iy); // same convention: atan2(x,y)
-                // Snell at slide->prism: nSlide * sin(spri) = nPrism * sin(thetaPrism)
-                double sinSpri = (nPrism * Math.Sin(thetaPrismRad)) / nSlide;
-                if (Math.Abs(sinSpri) > 1.0)
-                {
-                    // no real solution (TIR at slide->prism)
-                    spriAngle = double.NaN;
-                    return;
-                }
-                spriAngle = Rad2Deg(Math.Asin(Clamp(sinSpri, -1.0, 1.0)));
-                return;
+                var prismSlideRad = prismRad - prismAirRad;
+                var sinPrismSlide = Math.Sin(prismSlideRad);
+                var sinSlidePrism = nPrism * sinPrismSlide / nSlide;
+                var slidePrismRad = Math.Asin(sinSlidePrism);
+                spriInternalAngle = Rad2Deg(slidePrismRad);
             }
+        }
+
+        public static double OptimizeSPRiAngleIn(
+            OpticalMaterial materialIn,
+            IEnumerable<(OpticalMaterial material, double thickness_Meters)> thinLayers,
+            OpticalMaterial materialOut,
+            double wavelength_Meters,
+            double thetaIn_Guess,
+            double thetaIn_Min = 5,
+            double thetaIn_Max = 85,
+            bool absoluteSensitivity = true,
+            int maxIterations = 100,
+            double tolerance = 1e-6)
+        {
+            // Validate inputs
+            if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
+            if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
+            if (thinLayers == null) throw new ArgumentNullException(nameof(thinLayers));
+
+            // Clamp the guess to be within bounds
+            var thetaIn_Initial = Math.Max(thetaIn_Min, Math.Min(thetaIn_Max, thetaIn_Guess));
+            var thinLayersList = thinLayers.ToList();
+
+            // Define the objective function to be minimized (negative sensitivity)
+            double GetNegativeSensitivity(Vector<double> parameters)
+            {
+                try
+                {
+                    double thetaIn = parameters[0];
+
+                    // Validate bounds
+                    if (thetaIn < thetaIn_Min || thetaIn > thetaIn_Max)
+                        return 1e10;
+
+                    // Compute sensitivity with current angle
+                    double sensitivity = ComputeSPRiSensitivity(
+                        materialIn,
+                        thinLayersList,
+                        materialOut,
+                        wavelength_Meters,
+                        thetaIn,
+                        absoluteSensitivity);
+
+                    // Return NaN or invalid sensitivity as a large penalty
+                    if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                        return 1e10;
+
+                    // Return negative sensitivity (optimizer minimizes, we want to maximize)
+                    return -sensitivity;
+                }
+                catch
+                {
+                    return 1e10;
+                }
+            }
+
+            // Create bounds and initial guess vectors
+            var lowerBounds = Vector<double>.Build.DenseOfArray(new[] { thetaIn_Min });
+            var upperBounds = Vector<double>.Build.DenseOfArray(new[] { thetaIn_Max });
+            var initialGuess = Vector<double>.Build.DenseOfArray(new[] { thetaIn_Initial });
+
+            // Perform optimization
+            Vector<double> resultPoint = initialGuess;
+            try
+            {
+                resultPoint = FindMinimum.OfFunctionConstrained(
+                    GetNegativeSensitivity,
+                    lowerBounds,
+                    upperBounds,
+                    initialGuess,
+                    gradientTolerance: tolerance,
+                    parameterTolerance: tolerance,
+                    functionProgressTolerance: tolerance,
+                    maxIterations: maxIterations);
+            }
+            catch (MathNet.Numerics.Optimization.MaximumIterationsException)
+            {
+                // Optimization reached max iterations but may have found a reasonable solution
+                // Continue with best result found so far
+            }
+            catch (Exception ex)
+            {
+                // Log or handle other exceptions
+                throw new InvalidOperationException("Optimization failed", ex);
+            }
+
+            return resultPoint[0];
+        }
+
+
+
+        public static Vector<double> OptimizeSPRiLayerThicknessesAndAngleIn(
+            OpticalMaterial materialIn,
+            IEnumerable<OpticalMaterial> thinLayerMaterials,
+            IEnumerable<(double initialGuess, double lowerBound, double upperBound)> optimizations_Meters,
+            OpticalMaterial materialOut,
+            double wavelength_Meters,
+            double thetaIn_Guess,
+            double thetaIn_Min = 5,
+            double thetaIn_Max = 85,
+            bool absoluteSensitivity = true,
+            int maxIterations = 100,
+            double tolerance = 1e-6)
+        {
+            //在给定多层膜构成的基础上，优化每层膜的厚度以最大化SPRi检测灵敏度
+            //对于每个厚度组合，使用OptimizeSPRiAngleIn函数计算最优的入射角
+
+            // Validate inputs
+            if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
+            if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
+            if (thinLayerMaterials == null) throw new ArgumentNullException(nameof(thinLayerMaterials));
+            if (optimizations_Meters == null) throw new ArgumentNullException(nameof(optimizations_Meters));
+
+            var thinLayersList = thinLayerMaterials.ToList();
+            var optimizationsList = optimizations_Meters.ToList();
+
+            // Verify that the number of layers matches the number of optimizations
+            if (thinLayersList.Count != optimizationsList.Count)
+                throw new ArgumentException("Number of layers must match number of optimizations");
+
+            if (thinLayersList.Count == 0)
+                throw new ArgumentException("At least one layer must be provided");
+
+            // Build initial guess, lower bounds, and upper bounds vectors
+            // Only include layer thicknesses, NOT angle
+            var guessArray = optimizationsList.Select(o => o.initialGuess).ToArray();
+            var initialGuess = Vector<double>.Build.DenseOfArray(guessArray);
+            
+            var lowerArray = optimizationsList.Select(o => o.lowerBound).ToArray();
+            var lowerBounds = Vector<double>.Build.DenseOfArray(lowerArray);
+            
+            var upperArray = optimizationsList.Select(o => o.upperBound).ToArray();
+            var upperBounds = Vector<double>.Build.DenseOfArray(upperArray);
+
+            int numLayers = thinLayersList.Count;
+
+            // Define the objective function to be minimized (negative sensitivity)
+            double GetNegativeSensitivity(Vector<double> parameters)
+            {
+                try
+                {
+                    // Construct the thin layers with new thicknesses
+                    var updatedLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
+                    for (int i = 0; i < numLayers; i++)
+                        updatedLayers.Add((thinLayersList[i], parameters[i]));
+
+                    // 使用OptimizeSPRiAngleIn函数计算最优的入射角
+                    double optimalAngle = OptimizeSPRiAngleIn(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        wavelength_Meters,
+                        thetaIn_Guess: thetaIn_Guess,
+                        thetaIn_Min: thetaIn_Min,
+                        thetaIn_Max: thetaIn_Max,
+                        absoluteSensitivity: absoluteSensitivity,
+                        maxIterations: 5000,
+                        tolerance: tolerance);
+
+                    // Compute sensitivity with optimized angle
+                    double sensitivity = ComputeSPRiSensitivity(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        wavelength_Meters,
+                        optimalAngle,
+                        absoluteSensitivity);
+
+                    // Return NaN or invalid sensitivity as a large penalty
+                    if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                        return 1e10;
+
+                    // Return negative sensitivity (optimizer minimizes, we want to maximize)
+                    return -sensitivity;
+                }
+                catch
+                {
+                    return 1e10;
+                }
+            }
+
+            // Perform optimization on layer thicknesses only
+            Vector<double> resultPoint = initialGuess;
+            try
+            {
+                resultPoint = FindMinimum.OfFunctionConstrained(
+                    GetNegativeSensitivity,
+                    lowerBounds,
+                    upperBounds,
+                    initialGuess,
+                    gradientTolerance: tolerance,
+                    parameterTolerance: tolerance,
+                    functionProgressTolerance: tolerance,
+                    maxIterations: maxIterations);
+            }
+            catch (MathNet.Numerics.Optimization.MaximumIterationsException)
+            {
+                // Optimization reached max iterations but may have found a reasonable solution
+                // Continue with best result found so far
+            }
+            catch (Exception ex)
+            {
+                // Log or handle other exceptions
+                throw new InvalidOperationException("Optimization failed", ex);
+            }
+
+            // Append the optimal angle to the result
+            var finalLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
+            for (int i = 0; i < numLayers; i++)
+            {
+                finalLayers.Add((thinLayersList[i], resultPoint[i] * 1e-9));
+            }
+
+            double optimalAngleFinal = OptimizeSPRiAngleIn(
+                materialIn,
+                finalLayers,
+                materialOut,
+                wavelength_Meters,
+                thetaIn_Guess: (thetaIn_Min + thetaIn_Max) / 2.0,
+                thetaIn_Min: thetaIn_Min,
+                thetaIn_Max: thetaIn_Max,
+                absoluteSensitivity: absoluteSensitivity,
+                maxIterations: 50,
+                tolerance: tolerance);
+
+            // Return both thicknesses (in nm) and optimal angle
+            var resultArray = resultPoint.ToArray().ToList();
+            resultArray.Add(optimalAngleFinal);
+            return Vector<double>.Build.DenseOfArray(resultArray.ToArray());
         }
     }
 }
