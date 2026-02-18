@@ -348,9 +348,27 @@ namespace MaterialsAndEquations
             return resultPoint[0];
         }
 
+        public static double OptimizeSPRiAngleInByEnumeration(
+            OpticalMaterial materialIn,
+            IEnumerable<(OpticalMaterial material, double thickness_Meters)> thinLayers,
+            OpticalMaterial materialOut,
+            double wavelength_Meters,
+            double thetaIn_Min = 5,
+            double thetaIn_Max = 85,
+            double thetaIn_Steps = 401,
+            bool absoluteSensitivity = true,
+            int maxIterations = 100,
+            double tolerance = 1e-6)
+        {
+            //TODO
+            //通过遍历的方法，调用函数计算每个遍历角度的灵敏度
+            //作为使用Minimization方法优化的前一步先进行全局搜索避免卡在局部最优解
 
+            throw new NotImplementedException();
 
-        public static Vector<double> OptimizeSPRiLayerThicknessesAndAngleIn(
+        }
+
+        public static double[] OptimizeSPRiLayerThicknessesAndAngleIn(
             OpticalMaterial materialIn,
             IEnumerable<OpticalMaterial> thinLayerMaterials,
             IEnumerable<(double initialGuess, double lowerBound, double upperBound)> optimizations_Meters,
@@ -359,14 +377,12 @@ namespace MaterialsAndEquations
             double thetaIn_Guess,
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
-            bool absoluteSensitivity = true,
-            int maxIterations = 100,
-            double tolerance = 1e-6)
+            bool absoluteSensitivity = true)
         {
             //在给定多层膜构成的基础上，优化每层膜的厚度以最大化SPRi检测灵敏度
             //对于每个厚度组合，使用OptimizeSPRiAngleIn函数计算最优的入射角
 
-            // Validate inputs
+            //检查所有材料有效
             if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
             if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
             if (thinLayerMaterials == null) throw new ArgumentNullException(nameof(thinLayerMaterials));
@@ -375,35 +391,37 @@ namespace MaterialsAndEquations
             var thinLayersList = thinLayerMaterials.ToList();
             var optimizationsList = optimizations_Meters.ToList();
 
-            // Verify that the number of layers matches the number of optimizations
-            if (thinLayersList.Count != optimizationsList.Count)
-                throw new ArgumentException("Number of layers must match number of optimizations");
-
+            //至少需要有一层膜
             if (thinLayersList.Count == 0)
                 throw new ArgumentException("At least one layer must be provided");
+            //检查层数数量正确
+            if (thinLayersList.Count != optimizationsList.Count)
+                throw new ArgumentException(
+                    "Number of layers must match number of optimizations");
 
-            // Build initial guess, lower bounds, and upper bounds vectors
-            // Only include layer thicknesses, NOT angle
-            var guessArray = optimizationsList.Select(o => o.initialGuess).ToArray();
-            var initialGuess = Vector<double>.Build.DenseOfArray(guessArray);
-            
-            var lowerArray = optimizationsList.Select(o => o.lowerBound).ToArray();
-            var lowerBounds = Vector<double>.Build.DenseOfArray(lowerArray);
-            
-            var upperArray = optimizationsList.Select(o => o.upperBound).ToArray();
-            var upperBounds = Vector<double>.Build.DenseOfArray(upperArray);
+            //使用nm作为优化单位以提高数值稳定性
+            //避免数值相对优化步长过大导致优化算法无法正确更新参数
+            var initialGuess = Vector<double>.Build
+                .DenseOfEnumerable(optimizationsList
+                    .Select(o => o.initialGuess * 1e+9));
+            var lowerBounds = Vector<double>.Build
+                .DenseOfEnumerable(optimizationsList
+                    .Select(o => o.lowerBound * 1e+9));
+            var upperBounds = Vector<double>.Build
+                .DenseOfEnumerable(optimizationsList
+                    .Select(o => o.upperBound * 1e+9));
 
             int numLayers = thinLayersList.Count;
 
-            // Define the objective function to be minimized (negative sensitivity)
+            //定义优化函数
             double GetNegativeSensitivity(Vector<double> parameters)
             {
                 try
                 {
-                    // Construct the thin layers with new thicknesses
+                    //重构当前层厚度组合
                     var updatedLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
                     for (int i = 0; i < numLayers; i++)
-                        updatedLayers.Add((thinLayersList[i], parameters[i]));
+                        updatedLayers.Add((thinLayersList[i], parameters[i] * 1e-9));
 
                     // 使用OptimizeSPRiAngleIn函数计算最优的入射角
                     double optimalAngle = OptimizeSPRiAngleIn(
@@ -414,11 +432,9 @@ namespace MaterialsAndEquations
                         thetaIn_Guess: thetaIn_Guess,
                         thetaIn_Min: thetaIn_Min,
                         thetaIn_Max: thetaIn_Max,
-                        absoluteSensitivity: absoluteSensitivity,
-                        maxIterations: 5000,
-                        tolerance: tolerance);
+                        absoluteSensitivity: absoluteSensitivity);
 
-                    // Compute sensitivity with optimized angle
+                    //计算所在优化角度的灵敏度
                     double sensitivity = ComputeSPRiSensitivity(
                         materialIn,
                         updatedLayers,
@@ -429,18 +445,23 @@ namespace MaterialsAndEquations
 
                     // Return NaN or invalid sensitivity as a large penalty
                     if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                    {
+                        System.Diagnostics.Debug.Assert(false);
                         return 1e10;
+                    }
+                       
 
                     // Return negative sensitivity (optimizer minimizes, we want to maximize)
                     return -sensitivity;
                 }
                 catch
                 {
+                    System.Diagnostics.Debug.Assert(false);
                     return 1e10;
                 }
             }
 
-            // Perform optimization on layer thicknesses only
+            //优化参数层参数
             Vector<double> resultPoint = initialGuess;
             try
             {
@@ -448,11 +469,7 @@ namespace MaterialsAndEquations
                     GetNegativeSensitivity,
                     lowerBounds,
                     upperBounds,
-                    initialGuess,
-                    gradientTolerance: tolerance,
-                    parameterTolerance: tolerance,
-                    functionProgressTolerance: tolerance,
-                    maxIterations: maxIterations);
+                    initialGuess);
             }
             catch (MathNet.Numerics.Optimization.MaximumIterationsException)
             {
@@ -465,29 +482,133 @@ namespace MaterialsAndEquations
                 throw new InvalidOperationException("Optimization failed", ex);
             }
 
-            // Append the optimal angle to the result
-            var finalLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
-            for (int i = 0; i < numLayers; i++)
+            // 返回优化后的层厚度组合
+            return (resultPoint * 1e-9).ToArray();
+        }
+
+
+        public static double OptimizeSPRiWaveLength(
+            OpticalMaterial materialIn,
+            IEnumerable<OpticalMaterial> thinLayerMaterials,
+            IEnumerable<(double initialGuess, double lowerBound, double upperBound)> optimizations_Meters,
+            OpticalMaterial materialOut,
+            double wavelength_Guess_Meters,
+            double thetaIn_Guess,
+            double wavelength_Min_Meters = 400e-9,
+            double wavelength_Max_Meters = 1100e-9,
+            double thetaIn_Min = 5,
+            double thetaIn_Max = 85,
+            bool absoluteSensitivity = true)
+        {
+            // 检查所有材料有效
+            if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
+            if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
+            if (thinLayerMaterials == null) throw new ArgumentNullException(nameof(thinLayerMaterials));
+            if (optimizations_Meters == null) throw new ArgumentNullException(nameof(optimizations_Meters));
+
+            var thinLayersList = thinLayerMaterials.ToList();
+            var optimizationsList = optimizations_Meters.ToList();
+
+            // 至少需要有一层膜
+            if (thinLayersList.Count == 0)
+                throw new ArgumentException("At least one layer must be provided");
+            // 检查层数数量正确
+            if (thinLayersList.Count != optimizationsList.Count)
+                throw new ArgumentException(
+                    "Number of layers must match number of optimizations");
+
+            // 使用 nm 作为波长优化单位以提高数值稳定性
+            var wavelength_Initial = Math.Max(wavelength_Min_Meters, Math.Min(wavelength_Max_Meters, wavelength_Guess_Meters));
+            var initialGuess = Vector<double>.Build
+                .DenseOfArray(new[] { wavelength_Initial * 1e+9 });
+            var lowerBounds = Vector<double>.Build
+                .DenseOfArray(new[] { wavelength_Min_Meters * 1e+9 });
+            var upperBounds = Vector<double>.Build
+                .DenseOfArray(new[] { wavelength_Max_Meters * 1e+9 });
+
+            // 定义优化函数
+            double GetNegativeSensitivity(Vector<double> parameters)
             {
-                finalLayers.Add((thinLayersList[i], resultPoint[i] * 1e-9));
+                try
+                {
+                    // 从 nm 转换为米
+                    double currentWavelength = parameters[0] * 1e-9;
+
+                    // 对于当前波长，优化层厚度和入射角
+                    double[] optimizedThicknesses = OptimizeSPRiLayerThicknessesAndAngleIn(
+                        materialIn,
+                        thinLayersList,
+                        optimizationsList,
+                        materialOut,
+                        currentWavelength,
+                        thetaIn_Guess,
+                        thetaIn_Min,
+                        thetaIn_Max,
+                        absoluteSensitivity);
+
+                    // 重构层配置
+                    var updatedLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
+                    for (int i = 0; i < thinLayersList.Count; i++)
+                        updatedLayers.Add((thinLayersList[i], optimizedThicknesses[i]));
+
+                    // 计算最优入射角
+                    double optimalAngle = OptimizeSPRiAngleIn(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        currentWavelength,
+                        thetaIn_Guess: thetaIn_Guess,
+                        thetaIn_Min: thetaIn_Min,
+                        thetaIn_Max: thetaIn_Max,
+                        absoluteSensitivity: absoluteSensitivity);
+
+                    // 计算当前波长和优化参数下的灵敏度
+                    double sensitivity = ComputeSPRiSensitivity(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        currentWavelength,
+                        optimalAngle,
+                        absoluteSensitivity);
+
+                    // Return NaN or invalid sensitivity as a large penalty
+                    if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                    {
+                        return 1e10;
+                    }
+
+                    // Return negative sensitivity (optimizer minimizes, we want to maximize)
+                    return -sensitivity;
+                }
+                catch
+                {
+                    return 1e10;
+                }
             }
 
-            double optimalAngleFinal = OptimizeSPRiAngleIn(
-                materialIn,
-                finalLayers,
-                materialOut,
-                wavelength_Meters,
-                thetaIn_Guess: (thetaIn_Min + thetaIn_Max) / 2.0,
-                thetaIn_Min: thetaIn_Min,
-                thetaIn_Max: thetaIn_Max,
-                absoluteSensitivity: absoluteSensitivity,
-                maxIterations: 50,
-                tolerance: tolerance);
+            // 优化波长参数
+            Vector<double> resultPoint = initialGuess;
+            try
+            {
+                resultPoint = FindMinimum.OfFunctionConstrained(
+                    GetNegativeSensitivity,
+                    lowerBounds,
+                    upperBounds,
+                    initialGuess);
+            }
+            catch (MathNet.Numerics.Optimization.MaximumIterationsException)
+            {
+                // Optimization reached max iterations but may have found a reasonable solution
+                // Continue with best result found so far
+            }
+            catch (Exception ex)
+            {
+                // Log or handle other exceptions
+                throw new InvalidOperationException("Optimization failed", ex);
+            }
 
-            // Return both thicknesses (in nm) and optimal angle
-            var resultArray = resultPoint.ToArray().ToList();
-            resultArray.Add(optimalAngleFinal);
-            return Vector<double>.Build.DenseOfArray(resultArray.ToArray());
+            // 返回优化后的波长（米单位）
+            return resultPoint[0] * 1e-9;
         }
     }
 }

@@ -55,7 +55,13 @@ namespace MaterialsAndEquations
         /// <param name="drudeGammaEv">Drude 阻尼能量，单位：eV</param>
         /// <param name="oscillatorsEv">振子参数序列，每项为 (strength f_j, resonanceEnergyEv, gammaEv)</param>
         /// <returns>LorentzDrudeMetal 实例</returns>
-        public static LorentzDrudeMetal CreateFromEvParameters(string name, double epsInf, double plasmaEnergyEv, double drudeGammaEv, IEnumerable<(double Strength, double ResonanceEnergyEv, double GammaEv)> oscillatorsEv, double drudeStrength = 1.0)
+        public static LorentzDrudeMetal CreateFromEvParameters(
+            string name, 
+            double epsInf, 
+            double plasmaEnergyEv, 
+            double drudeGammaEv, 
+            IEnumerable<(double Strength, double ResonanceEnergyEv, double GammaEv)> oscillatorsEv, 
+            double drudeStrength = 1.0)
         {
             if (oscillatorsEv == null) throw new ArgumentNullException(nameof(oscillatorsEv));
 
@@ -66,46 +72,25 @@ namespace MaterialsAndEquations
             return new LorentzDrudeMetal(name, epsInf, omegaP, omegaPDrude, gammaDrude, osc);
         }
 
-        private static Complex RefractiveIndexAtWavelength(double wavelengthMeters, double epsInf, double omegaP, double omegaPDrude, double gammaDrude, IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="wavelengthMeters">波长单位为米</param>
+        /// <param name="epsInf">频率趋近于无穷的介电常数(一般为1)</param>
+        /// <param name="omegaP">单位是eV</param>
+        /// <param name="omegaPDrude"></param>
+        /// <param name="gammaDrude"></param>
+        /// <param name="oscillators"></param>
+        /// <returns></returns>
+        /// <exception cref="ArgumentOutOfRangeException"></exception>
+        private static Complex RefractiveIndexAtWavelength(
+            double wavelengthMeters, 
+            double epsInf, 
+            double omegaP, 
+            double omegaPDrude, 
+            double gammaDrude, 
+            IEnumerable<(double Strength, double Omega0, double Gamma)> oscillators)
         {
-            //此段Python代码供参考，为金属金的Lorentz-Drude模型参数示例
-            //# Lorentz-Drude (LD) model parameters
-            //ωp = 9.03  #eV
-            //f0 = 0.760
-            //Γ0 = 0.053 #eV
-            //f1 = 0.024
-            //Γ1 = 0.241 #eV
-            //ω1 = 0.415 #eV
-            //f2 = 0.010
-            //Γ2 = 0.345 #eV
-            //ω2 = 0.830 #eV
-            //f3 = 0.071
-            //Γ3 = 0.870 #eV
-            //ω3 = 2.969 #eV
-            //f4 = 0.601
-            //Γ4 = 2.494 #eV
-            //ω4 = 4.304 #eV
-            //f5 = 4.384
-            //Γ5 = 2.214 #eV
-            //ω5 = 13.32 #eV
-            //Ωp = f0**.5 * ωp  #eV
-            //def LD(ω):  #ω: eV
-            //    ε = 1-Ωp**2/(ω*(ω+1j*Γ0))
-            //    ε += f1*ωp**2 / ((ω1**2-ω**2)-1j*ω*Γ1)
-            //    ε += f2*ωp**2 / ((ω2**2-ω**2)-1j*ω*Γ2)
-            //    ε += f3*ωp**2 / ((ω3**2-ω**2)-1j*ω*Γ3)
-            //    ε += f4*ωp**2 / ((ω4**2-ω**2)-1j*ω*Γ4)
-            //    ε += f5*ωp**2 / ((ω5**2-ω**2)-1j*ω*Γ5)
-            //    return ε
-            //ev_min=0.2
-            //ev_max=5
-            //npoints=200
-            //eV = np.logspace(np.log10(ev_min), np.log10(ev_max), npoints)
-            //μm = 4.13566733e-1*2.99792458/eV
-            //ε = LD(eV)
-            //n = (ε**.5).real
-            //k = (ε**.5).imag
-
             if (wavelengthMeters <= 0) throw new ArgumentOutOfRangeException(nameof(wavelengthMeters), "wavelength must be positive and in meters");
 
             // angular frequency
