@@ -23,7 +23,7 @@ namespace MaterialsAndEquations.Tests
         [TestMethod]
         public void ClassicalCrAuSPRi()
         {
-            var spriSetup = SPRiSteup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
 
             var thetaInMin = 5.0;
             var thetaInMax = 85.0;
@@ -62,7 +62,7 @@ namespace MaterialsAndEquations.Tests
         [TestMethod]
         public void OptimizeCrAuSpriAngleIn()
         {
-            var spriSetup = SPRiSteup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
 
             #region 灵敏度绘图
 
@@ -136,7 +136,7 @@ namespace MaterialsAndEquations.Tests
 
             foreach (var crThickness in crThicknesses)
             {
-                var spriSetup = SPRiSteup.GetClassicalSPRiCrAu();
+                var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
                 var xs = new double[auThicknessSteps];
                 var ys = new double[auThicknessSteps];
 
@@ -182,7 +182,7 @@ namespace MaterialsAndEquations.Tests
 
             foreach (var crThickness in tiThicknesses)
             {
-                var spriSetup = SPRiSteup.GetClassicalSPRiTiAu();
+                var spriSetup = SPRiSetup.GetClassicalSPRiTiAu();
                 var xs = new double[auThicknessSteps];
                 var ys = new double[auThicknessSteps];
 
@@ -210,7 +210,7 @@ namespace MaterialsAndEquations.Tests
         [TestMethod]
         public void OptimizeCrAuSpriWaveLength()
         {
-            var spriSetup = SPRiSteup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
             var xs = new List<double>();
             var absoluteSensitivities = new List<double>();
             var relativeReflection = new List<double>();
@@ -242,33 +242,22 @@ namespace MaterialsAndEquations.Tests
         {
             var slideRIs = new List<double>() { 
                 1.50, 
-                //1.55, 
-                //1.6, 
-                //1.65, 
-                //1.7
+                1.55, 
+                1.6, 
+                1.65, 
+                1.7
             };
 
-            
             var p = new Plot();
 
             foreach (var idealSlideRI in slideRIs)
             {
-                var spriSetup = SPRiSteup.GetClassicalSPRiCrAu();
+                var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
                 spriSetup.Wavelength_Meters = 500e-9;
                 spriSetup.SlideMaterial = new OpticalMaterial("IdealRI",s => idealSlideRI);
+                spriSetup = spriSetup.GetOptiInstanceByEnum_LayerThickness();
 
-                var optimizedSetupAngle = 85;
-                var optimizedSensi = double.MinValue;
-                for(int i = 85;i > 5; i--)
-                {
-                    spriSetup.DefaultThetaIn = i;
-                    var sensitivity = spriSetup.ComputeSensitivity();
-                    if(sensitivity > optimizedSensi)
-                    {
-                        optimizedSetupAngle = i;
-                        optimizedSensi = sensitivity;
-                    }
-                }
+                var localSensi = spriSetup.ComputeSensitivity();
 
                 var xs = new List<double>();
                 var absoluteSensitivities = new List<double>();

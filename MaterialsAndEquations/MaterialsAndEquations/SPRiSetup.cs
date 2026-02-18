@@ -8,7 +8,7 @@ using static MaterialsAndEquations.KnownMaterials.KnownMaterials;
 
 namespace MaterialsAndEquations
 {
-    public class SPRiSteup
+    public class SPRiSetup
     {
         #region 属性
 
@@ -43,17 +43,17 @@ namespace MaterialsAndEquations
 
         #endregion
 
-        #region 方法
+        #region 工具方法
 
         public double ComputeReflection()
         {
             Equations.ComputeReflectionTransmission(
-                out _, 
-                out double reflection, 
-                out _, 
-                Wavelength_Meters, 
-                SlideMaterial, 
-                SPRiLayers, 
+                out _,
+                out double reflection,
+                out _,
+                Wavelength_Meters,
+                SlideMaterial,
+                SPRiLayers,
                 AnalyteMaterial, DefaultThetaIn, false);
 
             return reflection;
@@ -62,13 +62,27 @@ namespace MaterialsAndEquations
         public double ComputeSensitivity(bool isAbsoluteSensitivity = true)
         {
             return SPRiOptimizer.ComputeSPRiSensitivity(
-                SlideMaterial, 
-                SPRiLayers, 
-                AnalyteMaterial, 
-                Wavelength_Meters, 
+                SlideMaterial,
+                SPRiLayers,
+                AnalyteMaterial,
+                Wavelength_Meters,
                 DefaultThetaIn,
                 isAbsoluteSensitivity);
         }
+
+        public void CorrectCurrentSetup()
+        {
+            //检查当前模型无效的参数并修正
+        }
+
+        public SPRiSetup Clone()
+        {
+            //赋值当前模型参数并生成新实例
+        }
+
+        #endregion
+
+        #region 方法
 
         public double OptimizeThetaIn(
             double thetaIn = double.NaN,
@@ -163,7 +177,7 @@ namespace MaterialsAndEquations
         }
 
 
-        public SPRiSteup GetOptiInstance_ThetaIn(
+        public SPRiSetup GetOptiInstance_ThetaIn(
             double thetaIn = double.NaN,
             bool isAbsoluteSensitivity = true)
         {
@@ -178,7 +192,7 @@ namespace MaterialsAndEquations
                 thetaIn,
                 absoluteSensitivity: isAbsoluteSensitivity);
 
-            return new SPRiSteup
+            return new SPRiSetup
             {
                 PrismMaterial = PrismMaterial,
                 SlideMaterial = SlideMaterial,
@@ -189,7 +203,7 @@ namespace MaterialsAndEquations
             };
         }
 
-        public SPRiSteup GetOptiInstance_LayerThickness(
+        public SPRiSetup GetOptiInstance_LayerThickness(
             (double init, double lowerbound, double upperbound)[]?
                 optimizationRange_Meters = null,
             bool isAbsoluteSensitivity = true)
@@ -211,7 +225,7 @@ namespace MaterialsAndEquations
                 .Select((layer, index) => (layer.material, optimizedThicknesses[index]))
                 .ToList();
 
-            var toRet = new SPRiSteup
+            var toRet = new SPRiSetup
             {
                 PrismMaterial = PrismMaterial,
                 SlideMaterial = SlideMaterial,
@@ -224,7 +238,44 @@ namespace MaterialsAndEquations
 
         }
 
-        public SPRiSteup GetOptiInstance_Wavelength(
+        public SPRiSetup GetOptiInstanceByEnum_LayerThickness()
+        {
+            var optiLayers = SPRiOptimizer
+                .OptimizeSPRiLayerThicknessesAndAngleInByEnumeration(
+                    SlideMaterial,
+                    SPRiLayers.Select(s => s.material),
+                    LayerOptimizationRanges.Select(s =>
+                    {
+                        if (s.upperLimit - s.lowerLimit > 5e-8)
+                            return (50, s.lowerLimit, s.upperLimit);
+                        else return ((int)((s.upperLimit - s.lowerLimit) / 1e-9),
+                            s.lowerLimit, s.upperLimit);
+                    }),
+                    AnalyteMaterial,
+                    Wavelength_Meters
+                );
+
+            var toRet = new SPRiSetup
+            {
+                PrismMaterial = PrismMaterial,
+                SlideMaterial = SlideMaterial,
+                AnalyteMaterial = AnalyteMaterial,
+                Wavelength_Meters = Wavelength_Meters,
+                SPRiLayers = SPRiLayers.Select((s,id) => (s.material, optiLayers[id])).ToList(),
+                DefaultThetaIn = DefaultThetaIn
+            };
+
+            var angle = SPRiOptimizer.OptimizeSPRiAngleInByEnumeration(
+                SlideMaterial,
+                toRet.SPRiLayers,
+                AnalyteMaterial,
+                Wavelength_Meters);
+
+            toRet.DefaultThetaIn = angle;
+            return toRet;
+        }
+
+        public SPRiSetup GetOptiInstance_Wavelength(
             double wavelengthInit = double.NaN,
             double wavelengthLowerBound = double.NaN,
             double wavelengthUpperBound = double.NaN,
@@ -254,7 +305,7 @@ namespace MaterialsAndEquations
                 wavelength_Max_Meters: wavelengthUpperBound,
                 absoluteSensitivity: isAbsoluteSensitivity);
 
-            var toRet = new SPRiSteup
+            var toRet = new SPRiSetup
             {
                 PrismMaterial = PrismMaterial,
                 SlideMaterial = SlideMaterial,
@@ -302,14 +353,32 @@ namespace MaterialsAndEquations
 
         #region 构造函数
 
+        [Obsolete("此类禁止使用空构造函数创建")]
+        private SPRiSetup()
+        {
+            //空构造函数是禁用的
+            throw new NotImplementedException();
+        }
+
+        public SPRiSetup(
+            OpticalMaterial prismMaterial,
+            OpticalMaterial slideMaterial,
+            IEnumerable<(OpticalMaterial,double thickness_Meters)> layers,
+            OpticalMaterial analyteMaterial,
+            double wavelength_Meters,
+            double thetaInDefault)
+        {
+            //TODO
+        }
+
 
         #endregion
 
         #region 内置SPRi模型
 
-        public static SPRiSteup GetClassicalSPRiCrAu()
+        public static SPRiSetup GetClassicalSPRiCrAu()
         {
-            return new SPRiSteup
+            return new SPRiSetup
             {
                 PrismMaterial = Materials["ZF4"],
                 SlideMaterial = Materials["H-K9L"],
@@ -320,13 +389,18 @@ namespace MaterialsAndEquations
                     (Materials["Cr"], 5e-9),
                     (Materials["Au"], 47.5e-9) // 50 nm gold layer
                 },
+                LayerOptimizationRanges = new List<(double ll,double ul)>
+                {
+                    (2e-9,5e-9),
+                    (20e-9,70e-9),
+                },
                 DefaultThetaIn = 70.5
             };
         }
 
-        public static SPRiSteup GetClassicalSPRiTiAu()
+        public static SPRiSetup GetClassicalSPRiTiAu()
         {
-            return new SPRiSteup
+            return new SPRiSetup
             {
                 PrismMaterial = Materials["ZF4"],
                 SlideMaterial = Materials["H-K9L"],

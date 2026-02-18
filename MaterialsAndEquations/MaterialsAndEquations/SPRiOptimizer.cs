@@ -360,12 +360,55 @@ namespace MaterialsAndEquations
             int maxIterations = 100,
             double tolerance = 1e-6)
         {
-            //TODO
             //通过遍历的方法，调用函数计算每个遍历角度的灵敏度
             //作为使用Minimization方法优化的前一步先进行全局搜索避免卡在局部最优解
 
-            throw new NotImplementedException();
+            if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
+            if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
+            if (thinLayers == null) throw new ArgumentNullException(nameof(thinLayers));
+            if (thetaIn_Steps < 2) throw new ArgumentOutOfRangeException(nameof(thetaIn_Steps));
 
+            var thinLayersList = thinLayers.ToList();
+            var step = (thetaIn_Max - thetaIn_Min) / (thetaIn_Steps - 1);
+
+            double bestAngle = double.NaN;
+            double bestSensitivity = double.NegativeInfinity;
+
+            for (int i = 0; i < thetaIn_Steps; i++)
+            {
+                double thetaIn = thetaIn_Min + i * step;
+                double sensitivity = ComputeSPRiSensitivity(
+                    materialIn,
+                    thinLayersList,
+                    materialOut,
+                    wavelength_Meters,
+                    thetaIn,
+                    absoluteSensitivity);
+
+                if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                    continue;
+
+                if (sensitivity > bestSensitivity)
+                {
+                    bestSensitivity = sensitivity;
+                    bestAngle = thetaIn;
+                }
+            }
+
+            if (double.IsNaN(bestAngle))
+                return double.NaN;
+
+            return OptimizeSPRiAngleIn(
+                materialIn,
+                thinLayersList,
+                materialOut,
+                wavelength_Meters,
+                thetaIn_Guess: bestAngle,
+                thetaIn_Min: thetaIn_Min,
+                thetaIn_Max: thetaIn_Max,
+                absoluteSensitivity: absoluteSensitivity,
+                maxIterations: maxIterations,
+                tolerance: tolerance);
         }
 
         public static double[] OptimizeSPRiLayerThicknessesAndAngleIn(
@@ -484,6 +527,112 @@ namespace MaterialsAndEquations
 
             // 返回优化后的层厚度组合
             return (resultPoint * 1e-9).ToArray();
+        }
+
+        public static double[] OptimizeSPRiLayerThicknessesAndAngleInByEnumeration(
+            OpticalMaterial materialIn,
+            IEnumerable<OpticalMaterial> thinLayerMaterials,
+            IEnumerable<(int steps, double lowerBound, double upperBound)> optimizations_Meters,
+            OpticalMaterial materialOut,
+            double wavelength_Meters,
+            double thetaInSteps = 401,
+            double thetaIn_Min = 5,
+            double thetaIn_Max = 85,
+            bool absoluteSensitivity = true)
+        {
+            //类似于OptimizeSPRiAngleInByEnumeration
+            //并在函数中调用OptimizeSPRiAngleInByEnumeration
+            //全局遍历所有可能得组合，避免优化器卡局部最优解
+
+            //注意可能出现steps = 1的情况
+            //此时不对所对应的光学层进行优化
+            //此时该层的厚度取upperbound和lowerbond的平均值
+
+            if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
+            if (materialOut == null) throw new ArgumentNullException(nameof(materialOut));
+            if (thinLayerMaterials == null) throw new ArgumentNullException(nameof(thinLayerMaterials));
+            if (optimizations_Meters == null) throw new ArgumentNullException(nameof(optimizations_Meters));
+
+            var thinLayersList = thinLayerMaterials.ToList();
+            var optimizationsList = optimizations_Meters.ToList();
+
+            if (thinLayersList.Count == 0)
+                throw new ArgumentException("At least one layer must be provided");
+            if (thinLayersList.Count != optimizationsList.Count)
+                throw new ArgumentException(
+                    "Number of layers must match number of optimizations");
+
+            int numLayers = thinLayersList.Count;
+            var currentThicknesses = new double[numLayers];
+            var bestThicknesses = new double[numLayers];
+            double bestSensitivity = double.NegativeInfinity;
+
+            void EnumerateLayer(int index)
+            {
+                if (index == numLayers)
+                {
+                    var updatedLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
+                    for (int i = 0; i < numLayers; i++)
+                        updatedLayers.Add((thinLayersList[i], currentThicknesses[i]));
+
+                    double optimalAngle = OptimizeSPRiAngleInByEnumeration(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        wavelength_Meters,
+                        thetaIn_Min,
+                        thetaIn_Max,
+                        thetaInSteps,
+                        absoluteSensitivity);
+
+                    if (double.IsNaN(optimalAngle))
+                        return;
+
+                    double sensitivity = ComputeSPRiSensitivity(
+                        materialIn,
+                        updatedLayers,
+                        materialOut,
+                        wavelength_Meters,
+                        optimalAngle,
+                        absoluteSensitivity);
+
+                    if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
+                        return;
+
+                    if (sensitivity > bestSensitivity)
+                    {
+                        bestSensitivity = sensitivity;
+                        Array.Copy(currentThicknesses, bestThicknesses, numLayers);
+                    }
+
+                    return;
+                }
+
+                var (steps, lowerBound, upperBound) = optimizationsList[index];
+                if (steps < 1)
+                    throw new ArgumentOutOfRangeException(nameof(optimizations_Meters));
+
+                if (steps == 1)
+                {
+                    currentThicknesses[index] = (lowerBound + upperBound) * 0.5;
+                    EnumerateLayer(index + 1);
+                    return;
+                }
+
+                double step = (upperBound - lowerBound) / (steps - 1);
+                for (int i = 0; i < steps; i++)
+                {
+                    currentThicknesses[index] = lowerBound + i * step;
+                    EnumerateLayer(index + 1);
+                }
+            }
+
+            EnumerateLayer(0);
+
+            if (double.IsNegativeInfinity(bestSensitivity))
+                return Array.Empty<double>();
+
+            return bestThicknesses;
         }
 
 
