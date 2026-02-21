@@ -66,6 +66,7 @@ namespace MaterialsAndEquations.Tests
 
             var p = new Plot();
             p.Add.SignalXY(xs,ns);
+            p.Add.SignalXY(xs, ks);
 
             Tools.SavePlot(p);
         }

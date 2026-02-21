@@ -32,14 +32,11 @@ namespace MaterialsAndEquations
             OpticalMaterial materialOut,
             double wavelength_Meters,
             double thetaIn,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true)
         {
             //默认的折射率变化是Biacor 1RU
             var dRI = 1e-6;
-            var material_dRI = new OpticalMaterial(
-                "materialOut_dRI",
-                wl => materialOut![wl] + dRI
-            );
 
             // Validate inputs
             if (materialIn == null) throw new ArgumentNullException(nameof(materialIn));
@@ -58,17 +55,33 @@ namespace MaterialsAndEquations
                 thetaIn,
                 polarizationS: false);
 
-            // Compute reflectance after small change in outer material refractive index
-            Equations.ComputeReflectionTransmission(
-                out double thetaOut1,
-                out double reflection1,
-                out double transmission1,
-                wavelength_Meters,
-                materialIn,
-                thinLayers,
-                material_dRI,
-                thetaIn,
-                polarizationS: false);
+            var material_dRI = new OpticalMaterial(
+                "materialOut_dRI",wl => materialOut![wl] + dRI);
+            double reflection1;
+            //计算微小折射率变化后的反射率
+            if (depth_Meters == double.PositiveInfinity)
+            {
+                Equations.ComputeReflectionTransmission(
+                    out _,out reflection1,out _,
+                    wavelength_Meters,materialIn,thinLayers,material_dRI,
+                    thetaIn,
+                    polarizationS: false);
+            }
+            else
+            {
+
+                Equations.ComputeReflectionTransmission(
+                    out _, out reflection1, out _,
+                    wavelength_Meters, materialIn, 
+                    thinLayers.Append((material_dRI,depth_Meters)), 
+                    materialOut,
+                    thetaIn,
+                    polarizationS: false);
+            }
+
+
+            
+
 
             double dR = reflection1 - reflection0;
 
@@ -269,6 +282,7 @@ namespace MaterialsAndEquations
             double thetaIn_Guess,
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true,
             int maxIterations = 100,
             double tolerance = 1e-6)
@@ -300,6 +314,7 @@ namespace MaterialsAndEquations
                         materialOut,
                         wavelength_Meters,
                         thetaIn,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     // Return NaN or invalid sensitivity as a large penalty
@@ -356,6 +371,7 @@ namespace MaterialsAndEquations
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
             double thetaIn_Steps = 401,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true,
             int maxIterations = 100,
             double tolerance = 1e-6)
@@ -383,6 +399,7 @@ namespace MaterialsAndEquations
                     materialOut,
                     wavelength_Meters,
                     thetaIn,
+                    depth_Meters,
                     absoluteSensitivity);
 
                 if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
@@ -406,6 +423,7 @@ namespace MaterialsAndEquations
                 thetaIn_Guess: bestAngle,
                 thetaIn_Min: thetaIn_Min,
                 thetaIn_Max: thetaIn_Max,
+                depth_Meters: depth_Meters,
                 absoluteSensitivity: absoluteSensitivity,
                 maxIterations: maxIterations,
                 tolerance: tolerance);
@@ -420,6 +438,7 @@ namespace MaterialsAndEquations
             double thetaIn_Guess,
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true)
         {
             //在给定多层膜构成的基础上，优化每层膜的厚度以最大化SPRi检测灵敏度
@@ -484,6 +503,7 @@ namespace MaterialsAndEquations
                         materialOut,
                         wavelength_Meters,
                         optimalAngle,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     // Return NaN or invalid sensitivity as a large penalty
@@ -538,6 +558,7 @@ namespace MaterialsAndEquations
             double thetaInSteps = 401,
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true)
         {
             //类似于OptimizeSPRiAngleInByEnumeration
@@ -583,6 +604,7 @@ namespace MaterialsAndEquations
                         thetaIn_Min,
                         thetaIn_Max,
                         thetaInSteps,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     if (double.IsNaN(optimalAngle))
@@ -594,6 +616,7 @@ namespace MaterialsAndEquations
                         materialOut,
                         wavelength_Meters,
                         optimalAngle,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     if (double.IsNaN(sensitivity) || double.IsInfinity(sensitivity))
@@ -632,7 +655,55 @@ namespace MaterialsAndEquations
             if (double.IsNegativeInfinity(bestSensitivity))
                 return Array.Empty<double>();
 
-            return bestThicknesses;
+            // 使用最小化方法进一步优化枚举法获得的最佳厚度
+            var refinedLayers = new List<(OpticalMaterial layerMaterial, double thickness_Meters)>();
+            for (int i = 0; i < thinLayersList.Count; i++)
+                refinedLayers.Add((thinLayersList[i], bestThicknesses[i]));
+
+            // 计算当前最优厚度下的最优入射角
+            double optimalAngleForRefinement = OptimizeSPRiAngleInByEnumeration(
+                materialIn,
+                refinedLayers,
+                materialOut,
+                wavelength_Meters,
+                thetaIn_Min,
+                thetaIn_Max,
+                thetaInSteps,
+                depth_Meters,
+                absoluteSensitivity);
+
+            if (double.IsNaN(optimalAngleForRefinement))
+                return bestThicknesses;
+
+            // 使用最小化方法进行精细优化
+            var refinedOptimizations = new List<(double initialGuess, double lowerBound, double upperBound)>();
+            for (int i = 0; i < thinLayersList.Count; i++)
+            {
+                var (steps, lowerBound, upperBound) = optimizationsList[i];
+                refinedOptimizations.Add((bestThicknesses[i], lowerBound, upperBound));
+            }
+
+            try
+            {
+                double[] refinedThicknesses = OptimizeSPRiLayerThicknessesAndAngleIn(
+                    materialIn,
+                    thinLayersList,
+                    refinedOptimizations,
+                    materialOut,
+                    wavelength_Meters,
+                    thetaIn_Guess: optimalAngleForRefinement,
+                    thetaIn_Min: thetaIn_Min,
+                    thetaIn_Max: thetaIn_Max,
+                    depth_Meters: depth_Meters,
+                    absoluteSensitivity: absoluteSensitivity);
+
+                return refinedThicknesses;
+            }
+            catch
+            {
+                // 如果最小化失败，返回枚举法的结果
+                return bestThicknesses;
+            }
         }
 
 
@@ -647,6 +718,7 @@ namespace MaterialsAndEquations
             double wavelength_Max_Meters = 1100e-9,
             double thetaIn_Min = 5,
             double thetaIn_Max = 85,
+            double depth_Meters = double.PositiveInfinity,
             bool absoluteSensitivity = true)
         {
             // 检查所有材料有效
@@ -693,6 +765,7 @@ namespace MaterialsAndEquations
                         thetaIn_Guess,
                         thetaIn_Min,
                         thetaIn_Max,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     // 重构层配置
@@ -718,6 +791,7 @@ namespace MaterialsAndEquations
                         materialOut,
                         currentWavelength,
                         optimalAngle,
+                        depth_Meters,
                         absoluteSensitivity);
 
                     // Return NaN or invalid sensitivity as a large penalty

@@ -27,9 +27,9 @@ namespace MaterialsAndEquations.Tests
         }
 
         // Kept for compatibility; saving is handled by user code. Use GetPlotsDirectory to obtain where to write files.
-        public static void SavePlot(Plot p, [CallerMemberName] string testName = "")
+        public static void SavePlot(Plot p, string appendix = "", [CallerMemberName] string testName = "")
         {
-            var saveDir = Path.Combine(GetPlotsDirectory(), $"{testName}.png");
+            var saveDir = Path.Combine(GetPlotsDirectory(), $"{testName}{appendix}.png");
             Console.WriteLine(saveDir);
             p.SavePng(saveDir, 600, 400);
         }

@@ -14,6 +14,7 @@ using MathNet.Numerics.LinearAlgebra;
 using MathNet.Numerics;
 using System.Collections;
 using static MaterialsAndEquations.Tests.Tools;
+using System.Runtime.InteropServices;
 
 namespace MaterialsAndEquations.Tests
 {
@@ -21,9 +22,50 @@ namespace MaterialsAndEquations.Tests
     public class Sprimodeling
     {
         [TestMethod]
+        public void PlotOptimizedSPRiSetups()
+        {
+            foreach (var setupkvp in SPRiSetup.BuiltInSetups)
+            {
+                var setup = setupkvp.Value;
+                var opti = setup.GetOptiInstanceByEnum_LayerThickness();
+                opti.WriteInfo();
+
+                var xs = new List<double>();
+                var reflections = new List<double>();
+                var optimRefl = new List<double>();
+                var sensis = new List<double>();
+
+                for (var intAngle = 5.0; intAngle < 85.0; intAngle += 0.2)
+                {
+                    setup.DefaultThetaIn = intAngle;
+                    opti.DefaultThetaIn = setup.DefaultThetaIn = intAngle;
+
+                    xs.Add(intAngle);
+                    reflections.Add(setup.ComputeReflection());
+                    optimRefl.Add(opti.ComputeReflection());
+                    sensis.Add(opti.ComputeSensitivity());
+                }
+
+                var extMin = setup.GetInternalSPRiAngle(40);
+                var extMax = setup.GetInternalSPRiAngle(60);
+
+                var plot = new Plot();
+                plot.Add.SignalXY(xs.ToArray(), reflections.ToArray());
+                plot.Add.SignalXY(xs.ToArray(), optimRefl.ToArray());
+
+                var sig = plot.Add.SignalXY(xs.ToArray(), sensis.ToArray());
+                sig.Axes.YAxis = plot.Axes.Right;
+
+                plot.Add.HorizontalSpan(extMin, extMax);
+                plot.Title(setupkvp.Key);
+                SavePlot(plot, setupkvp.Key);
+            }
+        }
+
+        [TestMethod]
         public void ClassicalCrAuSPRi()
         {
-            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
 
             var thetaInMin = 5.0;
             var thetaInMax = 85.0;
@@ -62,7 +104,7 @@ namespace MaterialsAndEquations.Tests
         [TestMethod]
         public void OptimizeCrAuSpriAngleIn()
         {
-            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
 
             #region 灵敏度绘图
 
@@ -136,7 +178,7 @@ namespace MaterialsAndEquations.Tests
 
             foreach (var crThickness in crThicknesses)
             {
-                var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
+                var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
                 var xs = new double[auThicknessSteps];
                 var ys = new double[auThicknessSteps];
 
@@ -182,7 +224,7 @@ namespace MaterialsAndEquations.Tests
 
             foreach (var crThickness in tiThicknesses)
             {
-                var spriSetup = SPRiSetup.GetClassicalSPRiTiAu();
+                var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-TiAu"].Clone();
                 var xs = new double[auThicknessSteps];
                 var ys = new double[auThicknessSteps];
 
@@ -210,7 +252,7 @@ namespace MaterialsAndEquations.Tests
         [TestMethod]
         public void OptimizeCrAuSpriWaveLength()
         {
-            var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
+            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
             var xs = new List<double>();
             var absoluteSensitivities = new List<double>();
             var relativeReflection = new List<double>();
@@ -252,7 +294,7 @@ namespace MaterialsAndEquations.Tests
 
             foreach (var idealSlideRI in slideRIs)
             {
-                var spriSetup = SPRiSetup.GetClassicalSPRiCrAu();
+                var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
                 spriSetup.Wavelength_Meters = 500e-9;
                 spriSetup.SlideMaterial = new OpticalMaterial("IdealRI",s => idealSlideRI);
                 spriSetup = spriSetup.GetOptiInstanceByEnum_LayerThickness();
@@ -273,6 +315,39 @@ namespace MaterialsAndEquations.Tests
 
                 var sig = p.Add.SignalXY(xs, absoluteSensitivities);
                 sig.LegendText = $"{idealSlideRI}";
+            }
+
+            SavePlot(p);
+        }
+
+
+        [TestMethod]
+        public void CompareDifferentSPRiSetups()
+        {
+            var p = new Plot();
+
+            foreach (var setupKVP in SPRiSetup.BuiltInSetups)
+            {
+                var spriSetup = setupKVP.Value.Clone();
+                spriSetup.Wavelength_Meters = 500e-9;
+
+                spriSetup = spriSetup.GetOptiInstanceByEnum_LayerThickness();
+                var localSensi = spriSetup.ComputeSensitivity();
+
+                var xs = new List<double>();
+                var absoluteSensitivities = new List<double>();
+
+                for (int i = 500; i < 2400; i += 1)
+                {
+                    spriSetup.Wavelength_Meters = (i) * 1e-9;
+                    var optimized = spriSetup.GetOptiInstance_LayerThickness();
+                    spriSetup = optimized;
+                    xs.Add(i);
+                    absoluteSensitivities.Add(optimized.ComputeSensitivity());
+                }
+
+                var sig = p.Add.SignalXY(xs, absoluteSensitivities);
+                sig.LegendText = $"{setupKVP.Key}";
             }
 
             SavePlot(p);

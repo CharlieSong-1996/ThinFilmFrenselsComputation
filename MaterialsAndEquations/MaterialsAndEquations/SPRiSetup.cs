@@ -18,8 +18,17 @@ namespace MaterialsAndEquations
         public OpticalMaterial SlideMaterial { get; set; }
             = new("Dummy Material", s => 1.521);
 
-        public OpticalMaterial AnalyteMaterial { get; set; } 
-            = new("Dummy Material",s => 1.330);
+        public OpticalMaterial AnalyteMaterial { get; set; }
+            = new("Dummy Material", s => 1.330);
+
+        /// <summary>
+        /// 计算灵敏度时候所使用的穿透深度，
+        /// 基于理想建模穿透深度内的
+        /// </summary>
+        public double PenetrationDepth
+        {
+            get; set;
+        } = double.PositiveInfinity;
 
         public IList<(OpticalMaterial material, double thickness_Meters)> SPRiLayers
         {
@@ -45,6 +54,29 @@ namespace MaterialsAndEquations
 
         #region 工具方法
 
+        public double GetExternalSPRiAngle(double internalAngle = double.NaN)
+        {
+            if (double.IsNaN(internalAngle))
+                internalAngle = DefaultThetaIn;
+
+            var externalAngle = double.NaN;
+
+            SPRiOptimizer.ComputeSPRiPrismAngles(
+                ref internalAngle, ref externalAngle,
+                SlideMaterial, PrismMaterial, Wavelength_Meters);
+            return externalAngle;
+        }
+
+        public double GetInternalSPRiAngle(double externalAngle)
+        {
+            var internalAngle = double.NaN;
+
+            SPRiOptimizer.ComputeSPRiPrismAngles(
+                ref internalAngle, ref externalAngle,
+                SlideMaterial, PrismMaterial, Wavelength_Meters);
+            return internalAngle;
+        }
+
         public double ComputeReflection()
         {
             Equations.ComputeReflectionTransmission(
@@ -67,17 +99,75 @@ namespace MaterialsAndEquations
                 AnalyteMaterial,
                 Wavelength_Meters,
                 DefaultThetaIn,
+                PenetrationDepth,
                 isAbsoluteSensitivity);
         }
 
-        public void CorrectCurrentSetup()
+        public void CheckAndCorrectCurrentSetup()
         {
             //检查当前模型无效的参数并修正
+
+            //检查层厚度
+            //要求1：厚度大等于0，如果小于0则赋值0
+            //要求2：如果LayerOptimizationRange进行了范围约束，
+            //      超范围的厚度值被限制回边界值。
+            //      如果LayerOptimizationRange长度不等于层数且不等于零，
+            //      说明设置存在错误，应当抛出异常
+
+            if (LayerOptimizationRanges.Count != 0 && 
+                LayerOptimizationRanges.Count != SPRiLayers.Count)
+                throw new ArgumentException("LayerOptimizationRanges count must be zero or match layer count.");
+
+            for (int i = 0; i < SPRiLayers.Count; i++)
+            {
+                var layer = SPRiLayers[i];
+                var thickness = layer.thickness_Meters;
+
+                if (thickness < 0)
+                    thickness = 0;
+
+                if (LayerOptimizationRanges.Count == SPRiLayers.Count)
+                {
+                    var (lowerLimit, upperLimit) = LayerOptimizationRanges[i];
+                    if (thickness < lowerLimit)
+                        thickness = lowerLimit;
+                    else if (thickness > upperLimit)
+                        thickness = upperLimit;
+                }
+
+                if (!Equals(thickness, layer.thickness_Meters))
+                    SPRiLayers[i] = (layer.material, thickness);
+            }
         }
 
-        public SPRiSetup Clone()
+        public SPRiSetup Clone() => new SPRiSetup(this);
+
+        public void WriteInfo()
         {
-            //赋值当前模型参数并生成新实例
+            var wavelengthNm = this.Wavelength_Meters * 1e9;
+
+            var prismNk = this.PrismMaterial[this.Wavelength_Meters];
+            var slideNk = this.SlideMaterial[this.Wavelength_Meters];
+            var analyteNk = this.AnalyteMaterial[this.Wavelength_Meters];
+
+            Console.WriteLine($"PrismMaterial: {this.PrismMaterial.Name}, n: {prismNk.Real:F3}, k: {prismNk.Imaginary:F3}");
+            Console.WriteLine($"SlideMaterial: {this.SlideMaterial.Name}, n: {slideNk.Real:F3}, k: {slideNk.Imaginary:F3}");
+            Console.WriteLine($"AnalyteMaterial: {this.AnalyteMaterial.Name}, n: {analyteNk.Real:F3}, k: {analyteNk.Imaginary:F3}");
+            Console.WriteLine($"Wavelength_nm: {wavelengthNm:F3}");
+            Console.WriteLine($"DefaultThetaIn: {this.DefaultThetaIn}");
+
+            for (int i = 0; i < this.SPRiLayers.Count; i++)
+            {
+                var layer = this.SPRiLayers[i];
+                var layerNk = layer.material[this.Wavelength_Meters];
+                var thicknessNm = layer.thickness_Meters * 1e9;
+                Console.WriteLine($"Layer {i}: {layer.material.Name:F3}, Thickness_nm: {thicknessNm:F3}, n: {layerNk.Real:F3}, k: {layerNk.Imaginary:F3}");
+            }
+
+            Console.WriteLine();
+            Console.WriteLine($"Optimized Reflection = {this.ComputeReflection():F3}");
+            Console.WriteLine($"Absolute Sensitivity = {this.ComputeSensitivity():F3}");
+            Console.WriteLine($"Relative Sensitivity = {this.ComputeSensitivity(false):F3}");
         }
 
         #endregion
@@ -88,7 +178,7 @@ namespace MaterialsAndEquations
             double thetaIn = double.NaN,
             bool isAbsoluteSensitivity = true)
         {
-            if(double.IsNaN(thetaIn))
+            if (double.IsNaN(thetaIn))
                 thetaIn = DefaultThetaIn;
 
             return SPRiOptimizer.OptimizeSPRiAngleIn(
@@ -97,6 +187,7 @@ namespace MaterialsAndEquations
                 AnalyteMaterial,
                 Wavelength_Meters,
                 thetaIn,
+                depth_Meters: PenetrationDepth,
                 absoluteSensitivity: isAbsoluteSensitivity);
         }
 
@@ -106,9 +197,9 @@ namespace MaterialsAndEquations
             bool isAbsoluteSensitivity = true)
         {
             //如果不传入，默认在0-2倍范围内优化
-            if(optimizationRange_Meters is null)
+            if (optimizationRange_Meters is null)
             {
-                if(LayerOptimizationRanges.Count == SPRiLayers.Count)
+                if (LayerOptimizationRanges.Count == SPRiLayers.Count)
                 {
                     //如果模型已经预置了限制范围
                     optimizationRange_Meters = SPRiLayers.Select((s, id) =>
@@ -117,7 +208,7 @@ namespace MaterialsAndEquations
                             s.thickness_Meters > LayerOptimizationRanges[id].upperLimit)
                             throw new ArgumentException("Incompatible Data");
 
-                        return (s.thickness_Meters, 
+                        return (s.thickness_Meters,
                             LayerOptimizationRanges[id].lowerLimit,
                             LayerOptimizationRanges[id].upperLimit);
                     }).ToArray();
@@ -141,6 +232,7 @@ namespace MaterialsAndEquations
                 AnalyteMaterial,
                 Wavelength_Meters,
                 DefaultThetaIn,
+                depth_Meters: PenetrationDepth,
                 absoluteSensitivity: isAbsoluteSensitivity).ToArray();
         }
 
@@ -157,11 +249,11 @@ namespace MaterialsAndEquations
                 optimizationRange_Meters = SPRiLayers.Select(s =>
                     (s.thickness_Meters, 0.0, s.thickness_Meters * 2)).ToArray();
 
-            if(double.IsNaN(wavelengthInit))
+            if (double.IsNaN(wavelengthInit))
                 wavelengthInit = Wavelength_Meters;
-            if(double.IsNaN(wavelengthLowerBound))
+            if (double.IsNaN(wavelengthLowerBound))
                 wavelengthLowerBound = wavelengthInit - 250e-9;
-            if(double.IsNaN(wavelengthUpperBound))
+            if (double.IsNaN(wavelengthUpperBound))
                 wavelengthUpperBound = wavelengthInit + 250e-9;
 
             return SPRiOptimizer.OptimizeSPRiWaveLength(
@@ -173,6 +265,7 @@ namespace MaterialsAndEquations
                 DefaultThetaIn,
                 wavelength_Min_Meters: wavelengthLowerBound,
                 wavelength_Max_Meters: wavelengthUpperBound,
+                depth_Meters: PenetrationDepth,
                 absoluteSensitivity: isAbsoluteSensitivity);
         }
 
@@ -190,17 +283,12 @@ namespace MaterialsAndEquations
                 AnalyteMaterial,
                 Wavelength_Meters,
                 thetaIn,
+                depth_Meters: PenetrationDepth,
                 absoluteSensitivity: isAbsoluteSensitivity);
 
-            return new SPRiSetup
-            {
-                PrismMaterial = PrismMaterial,
-                SlideMaterial = SlideMaterial,
-                AnalyteMaterial = AnalyteMaterial,
-                Wavelength_Meters = Wavelength_Meters,
-                SPRiLayers = SPRiLayers.ToList(),
-                DefaultThetaIn = optimizedThetaIn
-            };
+            var toRet = Clone();
+            toRet.DefaultThetaIn = optimizedThetaIn;
+            return toRet;
         }
 
         public SPRiSetup GetOptiInstance_LayerThickness(
@@ -225,18 +313,31 @@ namespace MaterialsAndEquations
                 .Select((layer, index) => (layer.material, optimizedThicknesses[index]))
                 .ToList();
 
-            var toRet = new SPRiSetup
-            {
-                PrismMaterial = PrismMaterial,
-                SlideMaterial = SlideMaterial,
-                AnalyteMaterial = AnalyteMaterial,
-                Wavelength_Meters = Wavelength_Meters,
-                SPRiLayers = updatedLayers,
-                DefaultThetaIn = DefaultThetaIn
-            };
+            var toRet = Clone();
+            toRet.SPRiLayers.Clear();
+            foreach (var layer in updatedLayers)
+                toRet.SPRiLayers.Add(layer);
+            toRet.CheckAndCorrectCurrentSetup();
             return toRet.GetOptiInstance_ThetaIn(isAbsoluteSensitivity: true);
 
         }
+
+        public SPRiSetup GetOptiInstanceByEnum_Angle()
+        {
+            var optiAngle = SPRiOptimizer.OptimizeSPRiAngleInByEnumeration(
+                SlideMaterial,
+                SPRiLayers,
+                AnalyteMaterial,
+                Wavelength_Meters,
+                ThetaOptimizationRangeMin,
+                ThetaOptimizationRangeMax,
+                depth_Meters: PenetrationDepth);
+
+            var toRet = Clone();
+            toRet.DefaultThetaIn = optiAngle;
+            return toRet;
+        }
+
 
         public SPRiSetup GetOptiInstanceByEnum_LayerThickness()
         {
@@ -248,31 +349,20 @@ namespace MaterialsAndEquations
                     {
                         if (s.upperLimit - s.lowerLimit > 5e-8)
                             return (50, s.lowerLimit, s.upperLimit);
-                        else return ((int)((s.upperLimit - s.lowerLimit) / 1e-9),
+                        else return (1 + (int)((s.upperLimit - s.lowerLimit) / 1e-9),
                             s.lowerLimit, s.upperLimit);
                     }),
                     AnalyteMaterial,
-                    Wavelength_Meters
+                    Wavelength_Meters,
+                    depth_Meters: PenetrationDepth
                 );
 
-            var toRet = new SPRiSetup
-            {
-                PrismMaterial = PrismMaterial,
-                SlideMaterial = SlideMaterial,
-                AnalyteMaterial = AnalyteMaterial,
-                Wavelength_Meters = Wavelength_Meters,
-                SPRiLayers = SPRiLayers.Select((s,id) => (s.material, optiLayers[id])).ToList(),
-                DefaultThetaIn = DefaultThetaIn
-            };
+            var toRet = Clone();
+            toRet.SPRiLayers.Clear();
+            foreach (var layer in SPRiLayers.Select((s, id) => (s.material, optiLayers[id])))
+                toRet.SPRiLayers.Add(layer);
 
-            var angle = SPRiOptimizer.OptimizeSPRiAngleInByEnumeration(
-                SlideMaterial,
-                toRet.SPRiLayers,
-                AnalyteMaterial,
-                Wavelength_Meters);
-
-            toRet.DefaultThetaIn = angle;
-            return toRet;
+            return toRet.GetOptiInstanceByEnum_Angle();
         }
 
         public SPRiSetup GetOptiInstance_Wavelength(
@@ -305,53 +395,20 @@ namespace MaterialsAndEquations
                 wavelength_Max_Meters: wavelengthUpperBound,
                 absoluteSensitivity: isAbsoluteSensitivity);
 
-            var toRet = new SPRiSetup
-            {
-                PrismMaterial = PrismMaterial,
-                SlideMaterial = SlideMaterial,
-                AnalyteMaterial = AnalyteMaterial,
-                Wavelength_Meters = optimizedWavelength,
-                SPRiLayers = SPRiLayers.ToList(),
-                DefaultThetaIn = DefaultThetaIn
-            };
+            var toRet = Clone();
+            toRet.Wavelength_Meters = optimizedWavelength;
             return toRet.GetOptiInstance_LayerThickness();
         }
 
         #endregion
 
-        #region 其他函数
+        #region 构造函数
 
-        public void WriteInfo()
+        static SPRiSetup()
         {
-            var wavelengthNm = this.Wavelength_Meters * 1e9;
-
-            var prismNk = this.PrismMaterial[this.Wavelength_Meters];
-            var slideNk = this.SlideMaterial[this.Wavelength_Meters];
-            var analyteNk = this.AnalyteMaterial[this.Wavelength_Meters];
-
-            Console.WriteLine($"PrismMaterial: {this.PrismMaterial.Name}, n: {prismNk.Real:F3}, k: {prismNk.Imaginary:F3}");
-            Console.WriteLine($"SlideMaterial: {this.SlideMaterial.Name}, n: {slideNk.Real:F3}, k: {slideNk.Imaginary:F3}");
-            Console.WriteLine($"AnalyteMaterial: {this.AnalyteMaterial.Name}, n: {analyteNk.Real:F3}, k: {analyteNk.Imaginary:F3}");
-            Console.WriteLine($"Wavelength_nm: {wavelengthNm:F3}");
-            Console.WriteLine($"DefaultThetaIn: {this.DefaultThetaIn}");
-
-            for (int i = 0; i < this.SPRiLayers.Count; i++)
-            {
-                var layer = this.SPRiLayers[i];
-                var layerNk = layer.material[this.Wavelength_Meters];
-                var thicknessNm = layer.thickness_Meters * 1e9;
-                Console.WriteLine($"Layer {i}: {layer.material.Name:F3}, Thickness_nm: {thicknessNm:F3}, n: {layerNk.Real:F3}, k: {layerNk.Imaginary:F3}");
-            }
-
-            Console.WriteLine();
-            Console.WriteLine($"Optimized Reflection = {this.ComputeReflection():F3}");
-            Console.WriteLine($"Absolute Sensitivity = {this.ComputeSensitivity():F3}");
-            Console.WriteLine($"Relative Sensitivity = {this.ComputeSensitivity(false):F3}");
+            LoadBuiltInSetups();
         }
 
-        #endregion
-
-        #region 构造函数
 
         [Obsolete("此类禁止使用空构造函数创建")]
         private SPRiSetup()
@@ -360,15 +417,38 @@ namespace MaterialsAndEquations
             throw new NotImplementedException();
         }
 
+        public SPRiSetup(SPRiSetup cloneFrom)
+        {
+            PrismMaterial = cloneFrom.PrismMaterial;
+            SlideMaterial = cloneFrom.SlideMaterial;
+            SPRiLayers = cloneFrom.SPRiLayers.ToList();
+            AnalyteMaterial = cloneFrom.AnalyteMaterial;
+            Wavelength_Meters = cloneFrom.Wavelength_Meters;
+            DefaultThetaIn = cloneFrom.DefaultThetaIn;
+            ThetaOptimizationRangeMin = cloneFrom.ThetaOptimizationRangeMin;
+            ThetaOptimizationRangeMax = cloneFrom.ThetaOptimizationRangeMax;
+            LayerOptimizationRanges = cloneFrom.LayerOptimizationRanges.ToList();
+        }
+
         public SPRiSetup(
             OpticalMaterial prismMaterial,
             OpticalMaterial slideMaterial,
-            IEnumerable<(OpticalMaterial,double thickness_Meters)> layers,
+            IEnumerable<(OpticalMaterial, double thickness_Meters)> layers,
             OpticalMaterial analyteMaterial,
             double wavelength_Meters,
             double thetaInDefault)
         {
-            //TODO
+            if (prismMaterial == null) throw new ArgumentNullException(nameof(prismMaterial));
+            if (slideMaterial == null) throw new ArgumentNullException(nameof(slideMaterial));
+            if (layers == null) throw new ArgumentNullException(nameof(layers));
+            if (analyteMaterial == null) throw new ArgumentNullException(nameof(analyteMaterial));
+
+            PrismMaterial = prismMaterial;
+            SlideMaterial = slideMaterial;
+            AnalyteMaterial = analyteMaterial;
+            Wavelength_Meters = wavelength_Meters;
+            DefaultThetaIn = thetaInDefault;
+            SPRiLayers = layers.ToList();
         }
 
 
@@ -376,46 +456,106 @@ namespace MaterialsAndEquations
 
         #region 内置SPRi模型
 
-        public static SPRiSetup GetClassicalSPRiCrAu()
+        private static void LoadBuiltInSetups()
         {
-            return new SPRiSetup
+            var currentGlassSetup = new SPRiSetup(
+                Materials["ZF4"], Materials["H-K9L"], [], Materials["PBS"], 660e-9, 70);
+
+            var idealSAM = new OpticalMaterial("SAM", s => 1.465);
+
+            BuiltInSetups.Add("ZF4-K9-Au", new(currentGlassSetup)
             {
-                PrismMaterial = Materials["ZF4"],
-                SlideMaterial = Materials["H-K9L"],
-                AnalyteMaterial = Materials["H2O"],
-                Wavelength_Meters = 660e-9,
-                SPRiLayers = new List<(OpticalMaterial material, double thickness_Meters)>
+                SPRiLayers = new List<(OpticalMaterial, double)> 
+                    {(Materials["Au"], 47.5e-9)},
+                LayerOptimizationRanges = new List<(double, double)> 
+                    {(20e-9, 70e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-CrAu", new(currentGlassSetup)
+            {
+                SPRiLayers =  new List<(OpticalMaterial,double)>
+                    {(Materials["Cr"], 5e-9),(Materials["Au"], 47.5e-9)},
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(2e-9, 5e-9),(20e-9, 70e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-TiAu", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Ti"], 5e-9),(Materials["Au"], 47.5e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(2e-9, 5e-9),(20e-9, 70e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-TiCuAg", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Ti"], 5e-9),(Materials["Cu"], 5e-9),(Materials["Ag"], 40e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-TiAuAg", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Ti"], 5e-9),(Materials["Au"], 5e-9),(Materials["Ag"], 40e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-CrNiAg", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Cr"], 5e-9),(Materials["Ni"], 5e-9),(Materials["Ag"], 40e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9)}
+            });
+
+
+            BuiltInSetups.Add("ZF4-K9-TiCuAgAu", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Ti"], 5e-9),(Materials["Cu"], 5e-9),(Materials["Ag"], 40e-9), (Materials["Au"], 5e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9),(5e-9, 5e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-TiAuAgAu", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Ti"], 5e-9),(Materials["Au"], 5e-9),(Materials["Ag"], 40e-9), (Materials["Au"], 5e-9) },
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9),(5e-9, 5e-9)}
+            });
+
+            BuiltInSetups.Add("ZF4-K9-CrNiAgAu", new(currentGlassSetup)
+            {
+                SPRiLayers = new List<(OpticalMaterial, double)>
+                    {(Materials["Cr"], 5e-9),(Materials["Ni"], 5e-9),(Materials["Ag"], 40e-9), (Materials["Au"], 5e-9)},
+                LayerOptimizationRanges = new List<(double ll, double ul)>
+                        {(5e-9, 5e-9),(5e-9, 5e-9),(10e-9, 80e-9),(5e-9, 5e-9)}
+            });
+
+
+            foreach (var setup in BuiltInSetups.ToList())
+            {
+                BuiltInSetups.Add(setup.Key + "-SAM", new SPRiSetup(setup.Value)
                 {
-                    (Materials["Cr"], 5e-9),
-                    (Materials["Au"], 47.5e-9) // 50 nm gold layer
-                },
-                LayerOptimizationRanges = new List<(double ll,double ul)>
-                {
-                    (2e-9,5e-9),
-                    (20e-9,70e-9),
-                },
-                DefaultThetaIn = 70.5
-            };
+                    SPRiLayers = setup.Value.SPRiLayers
+                        .Append((idealSAM,2e-9)).ToList(),
+                    LayerOptimizationRanges = setup.Value
+                        .LayerOptimizationRanges
+                        .Append((2e-9,2e-9)).ToList()
+                });
+            }
+
         }
 
-        public static SPRiSetup GetClassicalSPRiTiAu()
+        public static Dictionary<string, SPRiSetup> BuiltInSetups
         {
-            return new SPRiSetup
-            {
-                PrismMaterial = Materials["ZF4"],
-                SlideMaterial = Materials["H-K9L"],
-                AnalyteMaterial = Materials["H2O"],
-                Wavelength_Meters = 660e-9,
-                SPRiLayers = new List<(OpticalMaterial material, double thickness_Meters)>
-                {
-                    (Materials["Ti"], 2e-9),
-                    (Materials["Au"], 47.5e-9) // 50 nm gold layer
-                },
-                DefaultThetaIn = 70.5
-            };
-        }
-
-
+            get;
+            set;
+        } = new();
 
         #endregion
     }

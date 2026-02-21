@@ -22,7 +22,9 @@ namespace MaterialsAndEquations.KnownMaterials
             LoadCDGMData(); // 读取CDGM玻璃数据库
             LoadLDData(); // 读取 Lorentz-Drude（金属）数据库
 
-            Materials.Add("H2O", new DebyeLorentzWater());
+            var water = new DebyeLorentzWater();
+            Materials.Add("H2O", water);
+            Materials.Add("PBS", new OpticalMaterial("PBS", s => water[s] + 0.00174 * 0.77));
         }
 
         private static void LoadCDGMData()

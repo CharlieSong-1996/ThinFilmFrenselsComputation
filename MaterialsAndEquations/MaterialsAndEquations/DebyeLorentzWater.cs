@@ -73,9 +73,12 @@ namespace MaterialsAndEquations
             }
 
             Complex epsTotal = epsD + epsL;
-
+            var toRet = 
+                wavelengthMeters < 1.2e-6 ? 
+                Complex.Sqrt(epsTotal).Real :
+                Complex.Sqrt(epsTotal);
             // n = sqrt(eps)
-            return Complex.Sqrt(epsTotal);
+            return toRet;
         }
     }
 }
