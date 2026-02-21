@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
@@ -21,10 +22,13 @@ namespace MaterialsAndEquations.KnownMaterials
         {
             LoadCDGMData(); // 读取CDGM玻璃数据库
             LoadLDData(); // 读取 Lorentz-Drude（金属）数据库
+            LoadWaterHaleData(); // 读取 Hale & Querry 水折射率数据
 
-            var water = new DebyeLorentzWater();
-            Materials.Add("H2O", water);
-            Materials.Add("PBS", new OpticalMaterial("PBS", s => water[s] + 0.00174 * 0.77));
+            // PBS 溶液基于水的折射率
+            if (Materials.TryGetValue("H2O", out var water))
+            {
+                Materials.Add("PBS", new OpticalMaterial("PBS", s => water[s] + 0.00174 * 0.77));
+            }
         }
 
         private static void LoadCDGMData()
@@ -264,6 +268,99 @@ namespace MaterialsAndEquations.KnownMaterials
             catch
             {
 
+            }
+
+            static bool TryParseDouble(string s, out double value)
+            {
+                value = double.NaN;
+                if (string.IsNullOrWhiteSpace(s)) return false;
+                s = s.Trim();
+                return double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out value);
+            }
+
+            static string[] ParseCsvLine(string line)
+            {
+                if (string.IsNullOrEmpty(line)) return Array.Empty<string>();
+                var parts = new List<string>();
+                var sb = new StringBuilder();
+                bool inQuotes = false;
+                for (int i = 0; i < line.Length; i++)
+                {
+                    char c = line[i];
+                    if (c == '"')
+                    {
+                        if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                        {
+                            sb.Append('"');
+                            i++;
+                        }
+                        else
+                        {
+                            inQuotes = !inQuotes;
+                        }
+                    }
+                    else if (c == ',' && !inQuotes)
+                    {
+                        parts.Add(sb.ToString());
+                        sb.Clear();
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                }
+                parts.Add(sb.ToString());
+                return parts.ToArray();
+            }
+        }
+
+        private static void LoadWaterHaleData()
+        {
+            // 读取 Hale & Querry 的水折射率数据
+            // CSV 格式: wl(μm), n, k
+            // 数据来源: Hale, G. M., and M. R. Querry. "Optical constants of water
+            // in the 200-nm to 200-μm wavelength region." Applied optics 12.3 (1973): 555-563.
+
+            using var stream = new StreamReader(
+                Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("MaterialsAndEquations.KnownMaterials.WaterHale.csv")!, encoding: Encoding.UTF8);
+
+            try
+            {
+                var lines = stream.ReadToEnd().Split('\n');
+                var dataPoints = new Dictionary<double, Complex>();
+
+                foreach (var rawLine in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(rawLine)) continue;
+
+                    var cols = ParseCsvLine(rawLine);
+                    if (cols.Length < 3) continue;
+
+                    // 跳过标题行
+                    if (cols[0].Trim().Equals("wl", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    // 解析波长（微米）、n 和 k
+                    if (TryParseDouble(cols[0], out double wlMicrons) &&
+                        TryParseDouble(cols[1], out double n) &&
+                        TryParseDouble(cols[2], out double k))
+                    {
+                        // 将波长从微米转换为米
+                        double wlMeters = wlMicrons * 1e-6;
+                        dataPoints[wlMeters] = new Complex(n, k);
+                    }
+                }
+
+                if (dataPoints.Count > 0)
+                {
+                    var waterMaterial = OpticalMaterial.FromPoints("H2O", dataPoints);
+                    Materials["H2O"] = waterMaterial;
+                    Materials["Water"] = waterMaterial; // 添加别名
+                }
+            }
+            catch
+            {
+                // 读取失败时静默忽略，不阻塞静态初始化
             }
 
             static bool TryParseDouble(string s, out double value)

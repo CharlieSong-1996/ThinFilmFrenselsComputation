@@ -31,7 +31,7 @@ namespace MaterialsAndEquations.Tests
         {
             var saveDir = Path.Combine(GetPlotsDirectory(), $"{testName}{appendix}.png");
             Console.WriteLine(saveDir);
-            p.SavePng(saveDir, 600, 400);
+            p.SavePng(saveDir, 1200, 800);
         }
     }
 }

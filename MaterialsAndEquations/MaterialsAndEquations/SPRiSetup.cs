@@ -425,6 +425,7 @@ namespace MaterialsAndEquations
             AnalyteMaterial = cloneFrom.AnalyteMaterial;
             Wavelength_Meters = cloneFrom.Wavelength_Meters;
             DefaultThetaIn = cloneFrom.DefaultThetaIn;
+            PenetrationDepth = cloneFrom.PenetrationDepth;
             ThetaOptimizationRangeMin = cloneFrom.ThetaOptimizationRangeMin;
             ThetaOptimizationRangeMax = cloneFrom.ThetaOptimizationRangeMax;
             LayerOptimizationRanges = cloneFrom.LayerOptimizationRanges.ToList();

@@ -8,11 +8,13 @@
 
   <ItemGroup>
     <None Remove="KnownMaterials\LD.csv" />
+    <None Remove="KnownMaterials\WaterHale.csv" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="KnownMaterials\CDGM.csv" />
     <EmbeddedResource Include="KnownMaterials\LD.csv" />
+    <EmbeddedResource Include="KnownMaterials\WaterHale.csv" />
   </ItemGroup>
 
   <ItemGroup>

@@ -79,10 +79,6 @@ namespace MaterialsAndEquations
                     polarizationS: false);
             }
 
-
-            
-
-
             double dR = reflection1 - reflection0;
 
             // relative change dR/R (if R is extremely small, fall back to absolute dR)

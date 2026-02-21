@@ -21,83 +21,181 @@ namespace MaterialsAndEquations.Tests
     [TestClass]
     public class Sprimodeling
     {
-        [TestMethod]
-        public void PlotOptimizedSPRiSetups()
+        public static IEnumerable<object[]> SPRiSetupsData
         {
-            foreach (var setupkvp in SPRiSetup.BuiltInSetups)
+            get
             {
-                var setup = setupkvp.Value;
-                var opti = setup.GetOptiInstanceByEnum_LayerThickness();
-                opti.WriteInfo();
-
-                var xs = new List<double>();
-                var reflections = new List<double>();
-                var optimRefl = new List<double>();
-                var sensis = new List<double>();
-
-                for (var intAngle = 5.0; intAngle < 85.0; intAngle += 0.2)
+                foreach (var setupkvp in SPRiSetup.BuiltInSetups)
                 {
-                    setup.DefaultThetaIn = intAngle;
-                    opti.DefaultThetaIn = setup.DefaultThetaIn = intAngle;
-
-                    xs.Add(intAngle);
-                    reflections.Add(setup.ComputeReflection());
-                    optimRefl.Add(opti.ComputeReflection());
-                    sensis.Add(opti.ComputeSensitivity());
+                    yield return new object[] { setupkvp.Key, setupkvp.Value };
                 }
-
-                var extMin = setup.GetInternalSPRiAngle(40);
-                var extMax = setup.GetInternalSPRiAngle(60);
-
-                var plot = new Plot();
-                plot.Add.SignalXY(xs.ToArray(), reflections.ToArray());
-                plot.Add.SignalXY(xs.ToArray(), optimRefl.ToArray());
-
-                var sig = plot.Add.SignalXY(xs.ToArray(), sensis.ToArray());
-                sig.Axes.YAxis = plot.Axes.Right;
-
-                plot.Add.HorizontalSpan(extMin, extMax);
-                plot.Title(setupkvp.Key);
-                SavePlot(plot, setupkvp.Key);
             }
         }
 
-        [TestMethod]
-        public void ClassicalCrAuSPRi()
+        [DataTestMethod]
+        [DynamicData(nameof(SPRiSetupsData))]
+        public void PlotOptimizedSPRiSetup(string setupName, SPRiSetup setup)
         {
-            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
+            var opti = setup.GetOptiInstanceByEnum_LayerThickness();
+            opti.WriteInfo();
 
-            var thetaInMin = 5.0;
-            var thetaInMax = 85.0;
-            var steps = 10001;
-            var thetaInEpsilon = (thetaInMax - thetaInMin) / steps;
+            var xs = new List<double>();
+            var reflections = new List<double>();
+            var optimRefl = new List<double>();
+            var sensis = new List<double>();
 
-            var xs = new double[steps];
-            var reflections = new double[steps];
-            var sensitivitiesAbsolute = new double[steps];
-            var sensitivitiesRelative = new double[steps];
-
-            for (int i = 0; i < steps;i++)
+            for (var intAngle = 5.0; intAngle < 85.0; intAngle += 0.2)
             {
-                var thetaIn = thetaInMin + i * thetaInEpsilon;
-                spriSetup.DefaultThetaIn = thetaIn;
-                xs[i] = thetaIn;
-                reflections[i] = spriSetup.ComputeReflection();
-                sensitivitiesAbsolute[i] = spriSetup.ComputeSensitivity(true);
-                sensitivitiesRelative[i] = spriSetup.ComputeSensitivity(false);
+                setup.DefaultThetaIn = intAngle;
+                opti.DefaultThetaIn = setup.DefaultThetaIn = intAngle;
+
+                xs.Add(intAngle);
+                reflections.Add(setup.ComputeReflection());
+                optimRefl.Add(opti.ComputeReflection());
+                sensis.Add(opti.ComputeSensitivity());
             }
 
+            var extMin = setup.GetInternalSPRiAngle(40);
+            var extMax = setup.GetInternalSPRiAngle(60);
+
             var plot = new Plot();
-            var reflectionLine = plot.Add.SignalXY(xs, reflections);
+            plot.Add.SignalXY(xs.ToArray(), reflections.ToArray());
+            plot.Add.SignalXY(xs.ToArray(), optimRefl.ToArray());
 
-            var sensitivityLine = plot.Add.SignalXY(xs, sensitivitiesAbsolute);
-            sensitivityLine.Axes.YAxis = plot.Axes.Right;
-            plot.Axes.Right.IsVisible = true;
+            var sig = plot.Add.SignalXY(xs.ToArray(), sensis.ToArray());
+            sig.Axes.YAxis = plot.Axes.Right;
 
-            var sensitivityLine2 = plot.Add.SignalXY(xs, sensitivitiesRelative);
-            var leftAxis = plot.Axes.AddLeftAxis();
-            sensitivityLine2.Axes.YAxis = leftAxis;
+            plot.Add.HorizontalSpan(extMin, extMax);
+            plot.Title(setupName);
+            SavePlot(plot, setupName);
+        }
 
+
+        [TestMethod]
+        public void ClassicalTiAuPenentrationAndSensitivity()
+        {
+            //基于正无穷厚度计算最优灵敏度
+            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-TiAu"]
+                .GetOptiInstanceByEnum_LayerThickness();
+
+            var plot = new Plot();
+
+            var penentrationDepthes = new double[] { 
+                50e-9, 100e-9, 200e-9, 500e-9, 1e-6, 2e-6, 5e-6 };
+
+            foreach (var pen in penentrationDepthes) {
+
+                spriSetup.PenetrationDepth = pen;
+
+                var thetaInMin = 45.0;
+                var thetaInMax = 85.0;
+                var steps = 1001;
+                var thetaInEpsilon = (thetaInMax - thetaInMin) / steps;
+                var xs = new double[steps];
+                var reflections = new double[steps];
+                var sensitivitiesAbsolute = new double[steps];
+                var sensitivitiesRelative = new double[steps];
+                for (int i = 0; i < steps; i++)
+                {
+                    var thetaIn = thetaInMin + i * thetaInEpsilon;
+                    spriSetup.DefaultThetaIn = thetaIn;
+                    xs[i] = thetaIn;
+                    sensitivitiesAbsolute[i] = spriSetup.ComputeSensitivity(true);
+                }
+                var sensitivityLine = plot.Add.SignalXY(xs, sensitivitiesAbsolute);
+                sensitivityLine.LegendText = $"{pen * 1e+6:F2}um";
+            }
+
+            plot.ShowLegend(Alignment.UpperLeft);
+            plot.Title("TiAu SPRi Sensitivity at Various Penetration Depths No Optimization");
+            SavePlot(plot);
+        }
+
+        [TestMethod]
+        public void ClassicalTiAuPenentrationAndSensitivityReOpti()
+        {
+            //基于正无穷厚度计算最优灵敏度
+            var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-TiAu"]
+                .GetOptiInstanceByEnum_LayerThickness();
+
+            var plot = new Plot();
+
+            var penentrationDepthes = new double[] {
+                20e-9, 50e-9, 100e-9, 200e-9, 500e-9, 1e-6};
+
+            foreach (var pen in penentrationDepthes)
+            {
+
+                spriSetup.PenetrationDepth = pen;
+                var reoptimized = spriSetup.GetOptiInstanceByEnum_LayerThickness();
+
+                var thetaInMin = 45.0;
+                var thetaInMax = 85.0;
+                var steps = 1001;
+                var thetaInEpsilon = (thetaInMax - thetaInMin) / steps;
+                var xs = new double[steps];
+                var reflections = new double[steps];
+
+                var sensitivitiesAbsolute = new double[steps];
+                var sensitivitiesAbsoluteReoptimized = new double[steps];
+
+                for (int i = 0; i < steps; i++)
+                {
+                    var thetaIn = thetaInMin + i * thetaInEpsilon;
+                    spriSetup.DefaultThetaIn = thetaIn;
+                    reoptimized.DefaultThetaIn = thetaIn;
+
+                    xs[i] = thetaIn;
+                    sensitivitiesAbsolute[i] = spriSetup.ComputeSensitivity(true);
+                    sensitivitiesAbsoluteReoptimized[i] = reoptimized.ComputeSensitivity(true);
+                }
+
+                var sensitivityLine = plot.Add.SignalXY(xs, sensitivitiesAbsolute);
+                var reoptiLine = plot.Add.SignalXY(xs, sensitivitiesAbsoluteReoptimized, sensitivityLine.Color);
+                reoptiLine.LinePattern = LinePattern.Dotted;
+
+                sensitivityLine.LegendText = $"{pen * 1e+6:F2}um";
+            }
+
+            plot.ShowLegend(Alignment.UpperLeft);
+            plot.Title("TiAu SPRi Sensitivity at Various Penetration Depths No Optimization vs Reoptimization For low penentration");
+            SavePlot(plot);
+        }
+
+        [TestMethod]
+        public void PenentrationAndSensitivityFixedAngle()
+        {
+            var materials = new List<string>() { "ZF4-K9-TiAu", "ZF4-K9-TiCuAg" };
+
+            var plot = new Plot();
+
+            foreach (var matName in materials){
+                //基于正无穷厚度计算最优灵敏度
+                var spriSetup = SPRiSetup.BuiltInSetups[matName]
+                    .GetOptiInstanceByEnum_LayerThickness();
+
+                var penMin = 10e-9;
+                var penMax = 1e-6;
+                var steps = 1001;
+                var penEpsilon = (penMax - penMin) / steps;
+
+                var xs = new double[steps];
+                var sensitivitiesAbsolute = new double[steps];
+            
+                for (int i = 0; i < steps; i++)
+                {
+                    var pen = penMin + i * penEpsilon;
+                    xs[i] = pen;
+
+                    spriSetup.PenetrationDepth = pen;
+                    sensitivitiesAbsolute[i] = spriSetup.ComputeSensitivity(true);
+                }
+                var sensitivityLine = plot.Add.SignalXY(xs, sensitivitiesAbsolute);
+                sensitivityLine.LegendText = $"{matName}";
+            }
+
+            plot.ShowLegend(Alignment.UpperLeft);
+            plot.Title("Penentration Depth vs Sensitivity");
             SavePlot(plot);
         }
 
@@ -258,7 +356,7 @@ namespace MaterialsAndEquations.Tests
             var relativeReflection = new List<double>();
             var internalAngle = new List<double>();
 
-            for (int i = 500;i < 2400; i += 1)
+            for (int i = 400;i < 1600; i += 1)
             {
                 spriSetup.Wavelength_Meters = (i) * 1e-9;
                 var optimized = spriSetup.GetOptiInstance_LayerThickness();
@@ -272,8 +370,42 @@ namespace MaterialsAndEquations.Tests
             var p = new Plot();
             p.Add.SignalXY(xs.ToArray(), absoluteSensitivities.ToArray());
 
-            var sigRef = p.Add.SignalXY(xs.ToArray(), internalAngle);
-            sigRef.Axes.YAxis = p.Axes.Right;
+            SavePlot(p);
+        }
+
+        [TestMethod]
+        public void OptimizeCrAuSpriWaveLengthDifferentPenentrations()
+        {
+            var p = new Plot();
+            var penentrations = new List<double>() { 50e-9, 200e-9, 1e-6 };
+
+            foreach(var pen in penentrations)
+            {
+                var spriSetup = SPRiSetup.BuiltInSetups["ZF4-K9-CrAu"].Clone();
+                spriSetup.PenetrationDepth = pen;
+                spriSetup.Wavelength_Meters = 500e-9;
+                spriSetup = spriSetup.GetOptiInstanceByEnum_LayerThickness();
+
+                var xs = new List<double>();
+                var absoluteSensitivities = new List<double>();
+                //var relativeReflection = new List<double>();
+                var internalAngle = new List<double>();
+
+                for (int i = 500; i < 1600; i += 1)
+                {
+                    spriSetup.Wavelength_Meters = (i) * 1e-9;
+                    var optimized = spriSetup.GetOptiInstance_LayerThickness();
+                    spriSetup = optimized;
+                    xs.Add(i);
+                    absoluteSensitivities.Add(optimized.ComputeSensitivity());
+
+                    //relativeReflection.Add(optimized.ComputeReflection());
+                    //internalAngle.Add(optimized.DefaultThetaIn);
+                }
+
+                var sig = p.Add.SignalXY(xs.ToArray(), absoluteSensitivities.ToArray());
+                sig.LegendText = $"Pen: {pen * 1e+9:F0} nm";
+            }
 
             SavePlot(p);
         }
